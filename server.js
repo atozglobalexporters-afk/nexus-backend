@@ -29,7 +29,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ems')
   .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => { console.error('❌ MongoDB error:', err.message); process.exit(1); });
+  .catch(err => { console.error('❌ MongoDB error:', err.message); });
 
 app.get('/health', (_, res) => res.json({ status:'ok', time: new Date().toISOString() }));
 app.use('/api', require('./src/routes'));
