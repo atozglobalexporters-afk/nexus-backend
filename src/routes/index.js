@@ -7,6 +7,9 @@ const uploadDir = path.join(__dirname, '../../uploads/worklogs');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({ destination: (req,file,cb)=>cb(null,uploadDir), filename: (req,file,cb)=>cb(null,`${Date.now()}-${file.originalname.replace(/\s/g,'_')}`) });
 const upload = multer({ storage, limits:{ fileSize: 20*1024*1024 } });
+const { authenticate, authorize } = require('../middleware/auth');
+const auth = require('../controllers/authController');
+const c    = require('../controllers/controllers');
 
 // ── Auth ──────────────────────────────────────────────────────
 router.post('/auth/register',           auth.register);
