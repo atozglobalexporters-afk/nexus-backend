@@ -61,6 +61,9 @@ const workLogSchema = new mongoose.Schema({
   description: { type: String, required: true },
   hoursWorked: { type: Number, default: 0 },
   tasks:       [{ title: String, status: { type: String, enum: ['done','in-progress','pending'], default: 'done' } }],
+  files:       [{ filename: String, originalName: String, size: Number, mimetype: String, url: String }],
+  approved:    { type: Boolean, default: false },
+  approvedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 // ── Salary ────────────────────────────────────────────────────
@@ -128,6 +131,13 @@ const notificationSchema = new mongoose.Schema({
 
 notificationSchema.index({ user: 1, read: 1 });
 
+// ── Holiday ───────────────────────────────────────────────────
+const holidaySchema = new mongoose.Schema({
+  date:        { type: String, required: true, unique: true },
+  name:        { type: String, required: true },
+  type:        { type: String, enum: ['holiday','workday'], default: 'holiday' },
+}, { timestamps: true });
+
 module.exports = {
   Company:      mongoose.model('Company',      companySchema),
   User:         mongoose.model('User',         userSchema),
@@ -138,4 +148,5 @@ module.exports = {
   Order:        mongoose.model('Order',        orderSchema),
   AuditLog:     mongoose.model('AuditLog',     auditSchema),
   Notification: mongoose.model('Notification', notificationSchema),
+  Holiday:      mongoose.model('Holiday',      holidaySchema),
 };

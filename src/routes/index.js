@@ -1,8 +1,12 @@
 // src/routes/index.js
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
-const auth = require('../controllers/authController');
-const c    = require('../controllers/controllers');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const uploadDir = path.join(__dirname, '../../uploads/worklogs');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const storage = multer.diskStorage({ destination: (req,file,cb)=>cb(null,uploadDir), filename: (req,file,cb)=>cb(null,`${Date.now()}-${file.originalname.replace(/\s/g,'_')}`) });
+const upload = multer({ storage, limits:{ fileSize: 20*1024*1024 } });
 
 // ── Auth ──────────────────────────────────────────────────────
 router.post('/auth/register',           auth.register);
@@ -29,10 +33,17 @@ router.delete('/users/:id', authenticate, authorize('admin','super_admin'), c.de
 router.get ('/attendance',         authenticate, c.getAttendance);
 router.post('/attendance/checkout',authenticate, c.checkOut);
 router.get ('/attendance/summary', authenticate, c.getAttendanceSummary);
+router.get ('/attendance/monthly', authenticate, c.getMonthlyAttendance);
+router.get ('/holidays',           authenticate, c.getHolidays);
+router.post('/holidays',           authenticate, authorize('admin','super_admin'), c.createHoliday);
+router.delete('/holidays/:id',     authenticate, authorize('admin','super_admin'), c.deleteHoliday);
 
 // ── Work Logs ─────────────────────────────────────────────────
-router.get ('/worklogs', authenticate, c.getWorkLogs);
-router.post('/worklogs', authenticate, c.createWorkLog);
+router.get   ('/worklogs',          authenticate, c.getWorkLogs);
+router.post  ('/worklogs',          authenticate, upload.array('files', 5), c.createWorkLog);
+router.delete('/worklogs/:id',      authenticate, c.deleteWorkLog);
+router.put   ('/worklogs/:id',      authenticate, c.updateWorkLog);
+router.get   ('/worklogs/download/:filename', authenticate, c.downloadWorkLogFile);
 
 // ── Salary ────────────────────────────────────────────────────
 router.get ('/salaries',     authenticate, c.getSalaries);

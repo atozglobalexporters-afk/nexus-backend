@@ -1,6 +1,8 @@
 // src/controllers/controllers.js
 const bcrypt = require('bcryptjs');
-const { User, Attendance, WorkLog, Salary, Company, Buyer, Order, AuditLog, Notification } = require('../models');
+const { User, Attendance, WorkLog, Salary, Company, Buyer, Order, AuditLog, Notification, Holiday } = require('../models');
+const path = require('path');
+const fs   = require('fs');
 
 // ── USERS ─────────────────────────────────────────────────────
 const getUsers = async (req, res) => {
@@ -110,8 +112,54 @@ const getWorkLogs = async (req, res) => {
 const createWorkLog = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const log   = await WorkLog.create({ ...req.body, user: req.user.id, date: req.body.date || today });
+    const files = (req.files||[]).map(f=>({
+      filename: f.filename,
+      originalName: f.originalname,
+      size: f.size,
+      mimetype: f.mimetype,
+      url: `/uploads/worklogs/${f.filename}`,
+    }));
+    const log = await WorkLog.create({
+      ...req.body,
+      user: req.user.id,
+      date: req.body.date || today,
+      files,
+    });
     res.status(201).json({ success:true, data: log });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+const updateWorkLog = async (req, res) => {
+  try {
+    const log = await WorkLog.findById(req.params.id);
+    if (!log) return res.status(404).json({ success:false, message:'Not found' });
+    if (log.user.toString() !== req.user.id && !['admin','super_admin'].includes(req.user.role))
+      return res.status(403).json({ success:false, message:'Forbidden' });
+    Object.assign(log, req.body);
+    await log.save();
+    res.json({ success:true, data: log });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+const deleteWorkLog = async (req, res) => {
+  try {
+    const log = await WorkLog.findById(req.params.id);
+    if (!log) return res.status(404).json({ success:false, message:'Not found' });
+    // Delete files
+    (log.files||[]).forEach(f=>{
+      const fp = path.join(__dirname,'../../uploads/worklogs',f.filename);
+      if(fs.existsSync(fp)) fs.unlinkSync(fp);
+    });
+    await log.deleteOne();
+    res.json({ success:true });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+const downloadWorkLogFile = async (req, res) => {
+  try {
+    const fp = path.join(__dirname,'../../uploads/worklogs',req.params.filename);
+    if (!fs.existsSync(fp)) return res.status(404).json({ success:false, message:'File not found' });
+    res.download(fp);
   } catch (err) { res.status(500).json({ success:false, message: err.message }); }
 };
 
@@ -251,10 +299,126 @@ const getDashboard = async (req, res) => {
 // ── SERVER TIME ───────────────────────────────────────────────
 const getServerTime = (req, res) => res.json({ success:true, time: new Date().toISOString(), timestamp: Date.now() });
 
+// ── HOLIDAYS ──────────────────────────────────────────────────
+const getHolidays = async (req, res) => {
+  try {
+    const { month } = req.query;
+    const q = month ? { date: { $regex: `^${month}` } } : {};
+    const data = await Holiday.find(q).sort({ date: 1 });
+    res.json({ success:true, data });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+const createHoliday = async (req, res) => {
+  try {
+    const { date, name, type } = req.body;
+    const existing = await Holiday.findOne({ date });
+    if (existing) {
+      existing.name = name; existing.type = type;
+      await existing.save();
+      return res.json({ success:true, data: existing });
+    }
+    const h = await Holiday.create({ date, name, type: type || 'holiday' });
+    res.status(201).json({ success:true, data: h });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+const deleteHoliday = async (req, res) => {
+  try {
+    await Holiday.findByIdAndDelete(req.params.id);
+    res.json({ success:true });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+};
+
+// ── MONTHLY ATTENDANCE ────────────────────────────────────────
+const getMonthlyAttendance = async (req, res) => {
+  try {
+    const { month, userId } = req.query;
+    const targetMonth = month || new Date().toISOString().slice(0,7);
+    const [year, m] = targetMonth.split('-');
+    const start = `${year}-${m}-01`;
+    const end = `${year}-${m}-31`;
+
+    const targetUser = userId || req.user.id;
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+
+    let users = [];
+    if (isAdmin && !userId) {
+      users = await User.find({ isActive: true }).select('name email jobTitle');
+    } else {
+      const u = await User.findById(targetUser).select('name email jobTitle');
+      users = [u];
+    }
+
+    const holidays = await Holiday.find({ date: { $gte: start, $lte: end } });
+    const holidayDates = new Set(holidays.map(h => h.date));
+
+    const result = await Promise.all(users.map(async (u) => {
+      const records = await Attendance.find({
+        user: u._id,
+        date: { $gte: start, $lte: end }
+      }).sort({ date: 1 });
+
+      const recordMap = {};
+      records.forEach(r => { recordMap[r.date] = r; });
+
+      // Build daily data
+      const daysInMonth = new Date(parseInt(year), parseInt(m), 0).getDate();
+      const days = [];
+      let presentCount = 0, absentCount = 0, lateCount = 0, holidayCount = 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${m}-${String(d).padStart(2,'0')}`;
+        const dayOfWeek = new Date(dateStr).getDay();
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = holidayDates.has(dateStr);
+        const record = recordMap[dateStr];
+        const isFuture = dateStr > new Date().toISOString().split('T')[0];
+
+        let status = 'absent';
+        if (isHoliday) { status = 'holiday'; holidayCount++; }
+        else if (isWeekend) { status = 'weekend'; }
+        else if (isFuture) { status = 'future'; }
+        else if (record) {
+          status = record.status;
+          if (status === 'present') presentCount++;
+          else if (status === 'late') { lateCount++; presentCount++; }
+          else if (status === 'absent') absentCount++;
+        } else if (!isFuture && !isWeekend && !isHoliday) {
+          absentCount++;
+        }
+
+        days.push({
+          date: dateStr,
+          day: d,
+          dayName: new Date(dateStr).toLocaleDateString('en-IN', { weekday: 'short' }),
+          status,
+          checkIn: record?.checkIn,
+          checkOut: record?.checkOut,
+          totalHours: record?.totalHours,
+          note: record?.note,
+          isWeekend,
+          isHoliday,
+        });
+      }
+
+      return {
+        user: { _id: u._id, name: u.name, email: u.email, jobTitle: u.jobTitle },
+        days,
+        summary: { present: presentCount, absent: absentCount, late: lateCount, holiday: holidayCount, total: daysInMonth }
+      };
+    }));
+
+    res.json({ success:true, data: result, holidays });
+  } catch (err) { res.status(500).json({ success:false, message: err.message }); }
+}; 
+
 module.exports = {
   getUsers, getUser, updateUser, deleteUser,
   getAttendance, checkOut, getAttendanceSummary,
-  getWorkLogs, createWorkLog,
+  getMonthlyAttendance,
+  getHolidays, createHoliday, deleteHoliday,
+  getWorkLogs, createWorkLog, updateWorkLog, deleteWorkLog, downloadWorkLogFile,
   getSalaries, createSalary, updateSalary,
   getCompany, updateCompany,
   getBuyers, createBuyer, updateBuyer, deleteBuyer,
