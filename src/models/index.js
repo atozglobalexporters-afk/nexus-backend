@@ -150,3 +150,124 @@ module.exports = {
   Notification: mongoose.model('Notification', notificationSchema),
   Holiday:      mongoose.model('Holiday',      holidaySchema),
 };
+
+// -- Department ------------------------------------------------
+const departmentSchema = new mongoose.Schema({
+  name:        { type: String, required: true, trim: true, unique: true },
+  description: { type: String, default: '' },
+  head:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  isActive:    { type: Boolean, default: true },
+}, { timestamps: true });
+
+const shiftSchema = new mongoose.Schema({
+  name:       { type: String, required: true },
+  startTime:  { type: String, required: true },
+  endTime:    { type: String, required: true },
+  days:       [{ type: String }],
+  assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  isActive:   { type: Boolean, default: true },
+}, { timestamps: true });
+
+const taskSchema = new mongoose.Schema({
+  title:       { type: String, required: true },
+  description: { type: String, default: '' },
+  assignedTo:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  assignedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  deadline:    { type: Date },
+  priority:    { type: String, enum: ['low','medium','high'], default: 'medium' },
+  status:      { type: String, enum: ['pending','in_progress','completed','cancelled'], default: 'pending' },
+  project:     { type: mongoose.Schema.Types.ObjectId, ref: 'Project', default: null },
+}, { timestamps: true });
+
+const projectSchema = new mongoose.Schema({
+  name:        { type: String, required: true },
+  description: { type: String, default: '' },
+  status:      { type: String, enum: ['planning','active','on_hold','completed','cancelled'], default: 'planning' },
+  priority:    { type: String, enum: ['low','medium','high'], default: 'medium' },
+  startDate:   { type: Date },
+  endDate:     { type: Date },
+  members:     [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  manager:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  budget:      { type: Number, default: 0 },
+  progress:    { type: Number, default: 0, min: 0, max: 100 },
+}, { timestamps: true });
+
+const timesheetSchema = new mongoose.Schema({
+  user:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  weekStart:  { type: String, required: true },
+  entries:    [{ date: String, project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' }, task: String, hours: { type: Number, default: 0 }, description: String }],
+  totalHours: { type: Number, default: 0 },
+  status:     { type: String, enum: ['draft','submitted','approved','rejected'], default: 'draft' },
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
+const payrollSchema = new mongoose.Schema({
+  user:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  month:       { type: String, required: true },
+  basicSalary: { type: Number, required: true },
+  allowances:  { type: Number, default: 0 },
+  deductions:  { type: Number, default: 0 },
+  tax:         { type: Number, default: 0 },
+  netSalary:   { type: Number, required: true },
+  daysWorked:  { type: Number, default: 0 },
+  daysAbsent:  { type: Number, default: 0 },
+  status:      { type: String, enum: ['draft','processed','paid'], default: 'draft' },
+  paidOn:      { type: Date },
+  notes:       { type: String, default: '' },
+  generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
+const expenseSchema = new mongoose.Schema({
+  user:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  title:       { type: String, required: true },
+  amount:      { type: Number, required: true },
+  category:    { type: String, enum: ['travel','food','accommodation','equipment','software','other'], default: 'other' },
+  date:        { type: String, required: true },
+  description: { type: String, default: '' },
+  status:      { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
+  approvedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  approvedOn:  { type: Date },
+}, { timestamps: true });
+
+const announcementSchema = new mongoose.Schema({
+  title:      { type: String, required: true },
+  content:    { type: String, required: true },
+  priority:   { type: String, enum: ['low','normal','high','urgent'], default: 'normal' },
+  postedBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  targetRole: { type: String, enum: ['all','admin','employee'], default: 'all' },
+  isActive:   { type: Boolean, default: true },
+}, { timestamps: true });
+
+const leaveSchema = new mongoose.Schema({
+  user:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  type:       { type: String, enum: ['casual','sick','earned','personal','unpaid'], default: 'casual' },
+  from:       { type: Date, required: true },
+  to:         { type: Date, required: true },
+  days:       { type: Number, default: 1 },
+  reason:     { type: String, required: true },
+  status:     { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reviewedOn: { type: Date },
+  note:       { type: String, default: '' },
+}, { timestamps: true });
+
+const organizationSchema = new mongoose.Schema({
+  companyName:  { type: String, required: true },
+  industry:     { type: String, default: '' },
+  founded:      { type: String, default: '' },
+  headquarters: { type: String, default: '' },
+  description:  { type: String, default: '' },
+  vision:       { type: String, default: '' },
+  mission:      { type: String, default: '' },
+}, { timestamps: true });
+
+module.exports.Department   = mongoose.model('Department',   departmentSchema);
+module.exports.Shift        = mongoose.model('Shift',        shiftSchema);
+module.exports.Task         = mongoose.model('Task',         taskSchema);
+module.exports.Project      = mongoose.model('Project',      projectSchema);
+module.exports.Timesheet    = mongoose.model('Timesheet',    timesheetSchema);
+module.exports.Payroll      = mongoose.model('Payroll',      payrollSchema);
+module.exports.Expense      = mongoose.model('Expense',      expenseSchema);
+module.exports.Announcement = mongoose.model('Announcement', announcementSchema);
+module.exports.Leave        = mongoose.model('Leave',        leaveSchema);
+module.exports.Organization = mongoose.model('Organization', organizationSchema);
