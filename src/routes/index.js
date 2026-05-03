@@ -76,3 +76,72 @@ router.get ('/notifications',           authenticate, c.getNotifications);
 router.post('/notifications/mark-read', authenticate, c.markNotificationsRead);
 
 module.exports = router;
+
+// -- Departments -----------------------------------------------
+router.get   ('/departments',     authenticate, c.getDepartments);
+router.post  ('/departments',     authenticate, authorize('admin','super_admin'), c.createDepartment);
+router.put   ('/departments/:id', authenticate, authorize('admin','super_admin'), c.updateDepartment);
+router.delete('/departments/:id', authenticate, authorize('admin','super_admin'), c.deleteDepartment);
+
+// -- Shifts ----------------------------------------------------
+router.get   ('/shifts',     authenticate, c.getShifts);
+router.post  ('/shifts',     authenticate, authorize('admin','super_admin'), c.createShift);
+router.put   ('/shifts/:id', authenticate, authorize('admin','super_admin'), c.updateShift);
+router.delete('/shifts/:id', authenticate, authorize('admin','super_admin'), c.deleteShift);
+
+// -- Tasks -----------------------------------------------------
+router.get   ('/tasks',     authenticate, c.getTasks);
+router.post  ('/tasks',     authenticate, authorize('admin','super_admin'), c.createTask);
+router.put   ('/tasks/:id', authenticate, c.updateTask);
+router.delete('/tasks/:id', authenticate, authorize('admin','super_admin'), c.deleteTask);
+
+// -- Projects --------------------------------------------------
+router.get   ('/projects',     authenticate, c.getProjects);
+router.post  ('/projects',     authenticate, authorize('admin','super_admin'), c.createProject);
+router.put   ('/projects/:id', authenticate, c.updateProject);
+router.delete('/projects/:id', authenticate, authorize('admin','super_admin'), c.deleteProject);
+
+// -- Timesheets ------------------------------------------------
+router.get   ('/timesheets',     authenticate, c.getTimesheets);
+router.post  ('/timesheets',     authenticate, c.createTimesheet);
+router.put   ('/timesheets/:id', authenticate, c.updateTimesheet);
+router.delete('/timesheets/:id', authenticate, authorize('admin','super_admin'), c.deleteTimesheet);
+
+// -- Payroll ---------------------------------------------------
+router.get   ('/payroll',          authenticate, authorize('admin','super_admin'), c.getPayroll);
+router.post  ('/payroll',          authenticate, authorize('admin','super_admin'), c.createPayroll);
+router.post  ('/payroll/generate', authenticate, authorize('admin','super_admin'), c.generatePayroll);
+router.put   ('/payroll/:id',      authenticate, authorize('admin','super_admin'), c.updatePayroll);
+router.delete('/payroll/:id',      authenticate, authorize('admin','super_admin'), c.deletePayroll);
+
+// -- Expenses --------------------------------------------------
+router.get   ('/expenses',     authenticate, c.getExpenses);
+router.post  ('/expenses',     authenticate, c.createExpense);
+router.put   ('/expenses/:id', authenticate, c.updateExpense);
+router.delete('/expenses/:id', authenticate, c.deleteExpense);
+
+// -- Announcements ---------------------------------------------
+router.get   ('/announcements',     authenticate, c.getAnnouncements);
+router.post  ('/announcements',     authenticate, authorize('admin','super_admin'), c.createAnnouncement);
+router.put   ('/announcements/:id', authenticate, authorize('admin','super_admin'), c.updateAnnouncement);
+router.delete('/announcements/:id', authenticate, authorize('admin','super_admin'), c.deleteAnnouncement);
+
+// -- Leaves ----------------------------------------------------
+router.get   ('/leaves',     authenticate, c.getLeaves);
+router.post  ('/leaves',     authenticate, c.createLeave);
+router.put   ('/leaves/:id', authenticate, c.updateLeave);
+router.delete('/leaves/:id', authenticate, c.deleteLeave);
+
+// -- Organization ----------------------------------------------
+router.get('/organization', authenticate, c.getOrganization);
+router.put('/organization', authenticate, authorize('admin','super_admin'), c.updateOrganization);
+
+// -- Roles & Permissions ---------------------------------------
+router.get('/roles',         authenticate, authorize('admin','super_admin'), c.getRoles);
+router.put('/roles/:userId', authenticate, authorize('admin','super_admin'), c.updateUserRole);
+
+// -- Reports ---------------------------------------------------
+router.get('/reports/overview',   authenticate, authorize('admin','super_admin'), c.getReportsOverview);
+router.get('/reports/attendance', authenticate, authorize('admin','super_admin'), c.getAttendanceReport);
+router.get('/reports/payroll',    authenticate, authorize('admin','super_admin'), c.getPayrollReport);
+router.get('/reports/tasks',      authenticate, authorize('admin','super_admin'), c.getTasksReport);

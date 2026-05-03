@@ -427,3 +427,300 @@ module.exports = {
   getNotifications, markNotificationsRead,
   getDashboard, getServerTime,
 };
+
+const { Department, Shift, Task, Project, Timesheet, Payroll, Expense, Announcement, Leave, Organization } = require('../models');
+
+exports.getDepartments = async (req, res) => {
+  try {
+    const departments = await Department.find({}).populate('head','name jobTitle').sort({ name: 1 });
+    const users = await User.find({ isActive: true }).select('department');
+    const result = departments.map(d => ({ ...d.toObject(), employeeCount: users.filter(u => u.department === d.name).length }));
+    res.json({ departments: result });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createDepartment = async (req, res) => {
+  try { const d = await Department.create(req.body); res.status(201).json({ department: d }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateDepartment = async (req, res) => {
+  try { const d = await Department.findByIdAndUpdate(req.params.id, req.body, { new: true }); res.json({ department: d }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteDepartment = async (req, res) => {
+  try { await Department.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getShifts = async (req, res) => {
+  try { const shifts = await Shift.find({}).populate('assignedTo','name department'); res.json({ shifts }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createShift = async (req, res) => {
+  try { const s = await Shift.create(req.body); res.status(201).json({ shift: s }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateShift = async (req, res) => {
+  try { const s = await Shift.findByIdAndUpdate(req.params.id, req.body, { new: true }); res.json({ shift: s }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteShift = async (req, res) => {
+  try { await Shift.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getTasks = async (req, res) => {
+  try {
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+    const filter = isAdmin ? {} : { assignedTo: req.user.id };
+    const tasks = await Task.find(filter).populate('assignedTo','name department').populate('assignedBy','name').sort({ createdAt: -1 });
+    res.json({ tasks });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createTask = async (req, res) => {
+  try {
+    const task = await Task.create({ ...req.body, assignedBy: req.user.id });
+    await task.populate('assignedTo','name');
+    res.status(201).json({ task });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateTask = async (req, res) => {
+  try { const t = await Task.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate('assignedTo','name'); res.json({ task: t }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteTask = async (req, res) => {
+  try { await Task.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getProjects = async (req, res) => {
+  try {
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+    const filter = isAdmin ? {} : { members: req.user.id };
+    const projects = await Project.find(filter).populate('members','name jobTitle').populate('manager','name').sort({ createdAt: -1 });
+    res.json({ projects });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createProject = async (req, res) => {
+  try { const p = await Project.create(req.body); res.status(201).json({ project: p }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateProject = async (req, res) => {
+  try { const p = await Project.findByIdAndUpdate(req.params.id, req.body, { new: true }); res.json({ project: p }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteProject = async (req, res) => {
+  try { await Project.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getTimesheets = async (req, res) => {
+  try {
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+    const filter = isAdmin ? {} : { user: req.user.id };
+    const sheets = await Timesheet.find(filter).populate('user','name department').sort({ createdAt: -1 });
+    res.json({ timesheets: sheets });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createTimesheet = async (req, res) => {
+  try {
+    const entries = req.body.entries || [];
+    const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+    const sheet = await Timesheet.create({ ...req.body, user: req.user.id, totalHours });
+    res.status(201).json({ timesheet: sheet });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateTimesheet = async (req, res) => {
+  try {
+    if (req.body.entries) req.body.totalHours = req.body.entries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+    if (req.body.status === 'approved') req.body.approvedBy = req.user.id;
+    const sheet = await Timesheet.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ timesheet: sheet });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteTimesheet = async (req, res) => {
+  try { await Timesheet.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getPayroll = async (req, res) => {
+  try {
+    const filter = req.query.month ? { month: req.query.month } : {};
+    const payroll = await Payroll.find(filter).populate('user','name department jobTitle').sort({ createdAt: -1 });
+    res.json({ payroll });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createPayroll = async (req, res) => {
+  try {
+    const net = (Number(req.body.basicSalary) + Number(req.body.allowances||0)) - (Number(req.body.deductions||0) + Number(req.body.tax||0));
+    const rec = await Payroll.create({ ...req.body, netSalary: net, generatedBy: req.user.id });
+    res.status(201).json({ payroll: rec });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.generatePayroll = async (req, res) => {
+  try {
+    const { month } = req.body;
+    if (!month) return res.status(400).json({ message: 'Month required' });
+    const users = await User.find({ isActive: true });
+    const created = [];
+    for (const u of users) {
+      const existing = await Payroll.findOne({ user: u._id, month });
+      if (existing) continue;
+      const rec = await Payroll.create({ user: u._id, month, basicSalary: u.salary||0, allowances: 0, deductions: 0, tax: 0, netSalary: u.salary||0, status: 'draft', generatedBy: req.user.id });
+      created.push(rec);
+    }
+    res.json({ message: `Generated for ${created.length} employees`, payroll: created });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updatePayroll = async (req, res) => {
+  try {
+    if (req.body.status === 'paid') req.body.paidOn = new Date();
+    const rec = await Payroll.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate('user','name');
+    res.json({ payroll: rec });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deletePayroll = async (req, res) => {
+  try { await Payroll.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getExpenses = async (req, res) => {
+  try {
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+    const filter = isAdmin ? {} : { user: req.user.id };
+    const expenses = await Expense.find(filter).populate('user','name department').sort({ createdAt: -1 });
+    res.json({ expenses });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createExpense = async (req, res) => {
+  try { const e = await Expense.create({ ...req.body, user: req.user.id }); res.status(201).json({ expense: e }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateExpense = async (req, res) => {
+  try {
+    if (req.body.status === 'approved') { req.body.approvedBy = req.user.id; req.body.approvedOn = new Date(); }
+    const expense = await Expense.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ expense });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteExpense = async (req, res) => {
+  try { await Expense.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getAnnouncements = async (req, res) => {
+  try {
+    const announcements = await Announcement.find({ isActive: true, $or: [{ targetRole: 'all' }, { targetRole: req.user.role }] }).populate('postedBy','name jobTitle').sort({ createdAt: -1 });
+    res.json({ announcements });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createAnnouncement = async (req, res) => {
+  try { const a = await Announcement.create({ ...req.body, postedBy: req.user.id }); res.status(201).json({ announcement: a }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateAnnouncement = async (req, res) => {
+  try { const a = await Announcement.findByIdAndUpdate(req.params.id, req.body, { new: true }); res.json({ announcement: a }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteAnnouncement = async (req, res) => {
+  try { await Announcement.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getLeaves = async (req, res) => {
+  try {
+    const isAdmin = ['admin','super_admin'].includes(req.user.role);
+    const filter = isAdmin ? {} : { user: req.user.id };
+    const leaves = await Leave.find(filter).populate('user','name department jobTitle').populate('reviewedBy','name').sort({ createdAt: -1 });
+    res.json({ leaves });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.createLeave = async (req, res) => {
+  try {
+    const from = new Date(req.body.from);
+    const to = new Date(req.body.to);
+    const days = Math.ceil((to - from) / (1000*60*60*24)) + 1;
+    const leave = await Leave.create({ ...req.body, user: req.user.id, days });
+    res.status(201).json({ leave });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateLeave = async (req, res) => {
+  try {
+    if (['approved','rejected'].includes(req.body.status)) { req.body.reviewedBy = req.user.id; req.body.reviewedOn = new Date(); }
+    const leave = await Leave.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate('user','name');
+    res.json({ leave });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.deleteLeave = async (req, res) => {
+  try { await Leave.findByIdAndDelete(req.params.id); res.json({ message: 'Deleted' }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getOrganization = async (req, res) => {
+  try {
+    let org = await Organization.findOne({});
+    if (!org) org = await Organization.create({ companyName: 'Nexus Enterprises Exporters Private Limited' });
+    res.json({ organization: org });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateOrganization = async (req, res) => {
+  try {
+    let org = await Organization.findOne({});
+    if (!org) org = await Organization.create({ companyName: 'Nexus Enterprises' });
+    Object.assign(org, req.body);
+    await org.save();
+    res.json({ organization: org });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getRoles = async (req, res) => {
+  try {
+    const users = await User.find({}).select('name email role department isActive jobTitle').sort({ role: 1 });
+    const roleSummary = { super_admin: users.filter(u => u.role==='super_admin').length, admin: users.filter(u => u.role==='admin').length, employee: users.filter(u => u.role==='employee').length };
+    res.json({ users, roleSummary });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.updateUserRole = async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(req.params.userId, { role: req.body.role }, { new: true }).select('-password');
+    res.json({ user });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+
+exports.getReportsOverview = async (req, res) => {
+  try {
+    const [totalEmployees, totalOrders, pendingLeaves, totalTasks, completedTasks] = await Promise.all([
+      User.countDocuments({}), Order.countDocuments({}),
+      Leave.countDocuments({ status: 'pending' }),
+      Task.countDocuments({}), Task.countDocuments({ status: 'completed' }),
+    ]);
+    const payrollAgg = await Payroll.aggregate([{ $group: { _id: null, total: { $sum: '$netSalary' } } }]);
+    res.json({ totalEmployees, totalOrders, pendingLeaves, totalTasks, completedTasks, taskCompletionRate: totalTasks ? Math.round(completedTasks/totalTasks*100) : 0, totalPayroll: payrollAgg[0]?.total || 0 });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.getAttendanceReport = async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const m = month || new Date().getMonth()+1;
+    const y = year  || new Date().getFullYear();
+    const start = `${y}-${String(m).padStart(2,'0')}-01`;
+    const end   = `${y}-${String(m).padStart(2,'0')}-31`;
+    const records = await Attendance.find({ date: { $gte: start, $lte: end } }).populate('user','name department');
+    const summary = { present: records.filter(r=>r.status==='present').length, late: records.filter(r=>r.status==='late').length, absent: records.filter(r=>r.status==='absent').length };
+    res.json({ records, summary });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.getPayrollReport = async (req, res) => {
+  try {
+    const filter = req.query.month ? { month: req.query.month } : {};
+    const records = await Payroll.find(filter).populate('user','name department');
+    const total = records.reduce((s,r) => s+r.netSalary, 0);
+    res.json({ records, totalPayroll: total });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
+exports.getTasksReport = async (req, res) => {
+  try {
+    const tasks = await Task.find({}).populate('assignedTo','name department');
+    const summary = { total: tasks.length, pending: tasks.filter(t=>t.status==='pending').length, inProgress: tasks.filter(t=>t.status==='in_progress').length, completed: tasks.filter(t=>t.status==='completed').length };
+    res.json({ tasks, summary });
+  } catch (e) { res.status(500).json({ message: e.message }); }
+};
