@@ -75,8 +75,6 @@ router.get('/audit', authenticate, authorize('admin','super_admin'), c.getAuditL
 router.get ('/notifications',           authenticate, c.getNotifications);
 router.post('/notifications/mark-read', authenticate, c.markNotificationsRead);
 
-module.exports = router;
-
 // -- Departments -----------------------------------------------
 router.get   ('/departments',     authenticate, c.getDepartments);
 router.post  ('/departments',     authenticate, authorize('admin','super_admin'), c.createDepartment);
@@ -145,3 +143,5 @@ router.get('/reports/overview',   authenticate, authorize('admin','super_admin')
 router.get('/reports/attendance', authenticate, authorize('admin','super_admin'), c.getAttendanceReport);
 router.get('/reports/payroll',    authenticate, authorize('admin','super_admin'), c.getPayrollReport);
 router.get('/reports/tasks',      authenticate, authorize('admin','super_admin'), c.getTasksReport);
+
+module.exports = router;

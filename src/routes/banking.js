@@ -215,23 +215,47 @@ router.post('/transactions/:id/restore', async (req, res) => {
 // STATS
 // ─────────────────────────────────────────────────────────────
 
-// GET /api/banking/stats — total cash, monthly inflow/outflow/net
+// GET /api/banking/stats?period=month|year|all (default: month)
 router.get('/stats', async (req, res) => {
     try {
         const accounts = await BankAccount.find({ deletedAt: null, status: 'active' });
         const totalCash = accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
+        const activeAccountIds = accounts.map(a => a._id);
 
+        const period = (req.query.period || 'month').toLowerCase();
         const now = new Date();
+        let from, to, label;
+        if (period === 'year') {
+            from = new Date(now.getFullYear(), 0, 1);
+            to = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+            label = 'year';
+        } else if (period === 'all') {
+            from = null; to = null; label = 'all';
+        } else {
+            from = new Date(now.getFullYear(), now.getMonth(), 1);
+            to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+            label = 'month';
+        }
+
+        // Only count transactions belonging to NON-deleted accounts
+        const txnQuery = {
+            deletedAt: null,
+            account: { $in: activeAccountIds },
+        };
+        if (from && to) txnQuery.date = { $gte: from, $lte: to };
+
+        const txns = await BankTransaction.find(txnQuery);
+        const inflow = txns.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
+        const outflow = txns.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
+
+        // Also fetch this-month txn count for header sub-label (always month-based)
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-        const monthTxns = await BankTransaction.find({
+        const monthTxnCount = await BankTransaction.countDocuments({
             deletedAt: null,
+            account: { $in: activeAccountIds },
             date: { $gte: startOfMonth, $lte: endOfMonth },
         });
-
-        const inflow = monthTxns.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
-        const outflow = monthTxns.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
 
         res.json({
             success: true,
@@ -241,7 +265,8 @@ router.get('/stats', async (req, res) => {
                 outflow,
                 net: inflow - outflow,
                 accountsCount: accounts.length,
-                transactionsThisMonth: monthTxns.length,
+                transactionsThisMonth: monthTxnCount,
+                period: label,
             },
         });
     } catch (err) {
