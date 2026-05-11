@@ -1,22 +1,22 @@
 // server.js
 require('dotenv').config();
-const http      = require('http');
-const express   = require('express');
-const mongoose  = require('mongoose');
-const cors      = require('cors');
-const helmet    = require('helmet');
-const morgan    = require('morgan');
+const http = require('http');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
-const jwt       = require('jsonwebtoken');
-const path      = require('path');
-const fs        = require('fs');
+const jwt = require('jsonwebtoken');
+const path = require('path');
+const fs = require('fs');
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
-const PORT   = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000;
 
-['uploads/chat','uploads/avatars','uploads/documents'].forEach(dir => {
+['uploads/chat', 'uploads/avatars', 'uploads/documents'].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -31,21 +31,22 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(morgan('combined'));
-app.use(rateLimit({ windowMs: 15*60*1000, max: 500 }));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500 }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ems')
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => { console.error('❌ MongoDB error:', err.message); process.exit(1); });
 
-app.get('/health', (_, res) => res.json({ status:'ok', time: new Date().toISOString() }));
+app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.use('/api', require('./src/routes'));
 app.use('/api/chat', require('./src/routes/chat'));
-app.use((req, res) => res.status(404).json({ success:false, message:`${req.method} ${req.url} not found` }));
-app.use((err, req, res, next) => res.status(500).json({ success:false, message: err.message }));
+app.use('/api/banking', require('./src/routes/banking'));
+app.use((req, res) => res.status(404).json({ success: false, message: `${req.method} ${req.url} not found` }));
+app.use((err, req, res, next) => res.status(500).json({ success: false, message: err.message }));
 
 const io = new Server(server, {
- cors: { origin: ['https://atoz-ems-frontend-sr59.vercel.app','http://localhost:3000','http://localhost:5173'], credentials: true },
+  cors: { origin: ['https://atoz-ems-frontend-sr59.vercel.app', 'http://localhost:3000', 'http://localhost:5173'], credentials: true },
   maxHttpBufferSize: 50 * 1024 * 1024
 });
 
@@ -77,8 +78,8 @@ io.on('connection', socket => {
   });
 
   socket.on('broadcast', msg => {
-    if (['admin','super_admin'].includes(socket.role)) {
-      io.emit('notification', { title:'Announcement', message: msg, type:'info', time: new Date().toISOString() });
+    if (['admin', 'super_admin'].includes(socket.role)) {
+      io.emit('notification', { title: 'Announcement', message: msg, type: 'info', time: new Date().toISOString() });
     }
   });
 
@@ -92,15 +93,15 @@ app.set('io', io);
 
 setInterval(async () => {
   const { Attendance } = require('./src/models');
-  const cutoff = new Date(Date.now() - parseInt(process.env.AUTO_LOGOUT_HOURS||'10') * 3600000);
-  const stale  = await Attendance.find({ checkOut: null, checkIn: { $lt: cutoff } });
+  const cutoff = new Date(Date.now() - parseInt(process.env.AUTO_LOGOUT_HOURS || '10') * 3600000);
+  const stale = await Attendance.find({ checkOut: null, checkIn: { $lt: cutoff } });
   for (const a of stale) {
     a.checkOut = new Date();
-    a.totalHours = parseFloat(((a.checkOut - a.checkIn)/3600000).toFixed(2));
+    a.totalHours = parseFloat(((a.checkOut - a.checkIn) / 3600000).toFixed(2));
     a.autoClosed = true;
     await a.save();
   }
 }, 3600000);
 
-server.listen(PORT, () => console.log(`🚀 EMS Server running on port ${PORT} [${process.env.NODE_ENV||'development'}]`));
+server.listen(PORT, () => console.log(`🚀 EMS Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`));
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
