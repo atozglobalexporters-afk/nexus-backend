@@ -144,4 +144,93 @@ router.get('/reports/attendance', authenticate, authorize('admin','super_admin')
 router.get('/reports/payroll',    authenticate, authorize('admin','super_admin'), c.getPayrollReport);
 router.get('/reports/tasks',      authenticate, authorize('admin','super_admin'), c.getTasksReport);
 
+// -- Kanban: column moves, subtasks, comments -----------------
+router.patch('/tasks/:id/column', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const { column } = req.body;
+    if (!['backlog', 'in_progress', 'review', 'done'].includes(column)) {
+      return res.status(400).json({ success: false, message: 'Invalid column' });
+    }
+    const statusMap = { backlog: 'pending', in_progress: 'in_progress', review: 'in_progress', done: 'completed' };
+    const task = await require('../models').Task.findByIdAndUpdate(
+      req.params.id, { column, status: statusMap[column] }, { new: true }
+    ).populate('assignedTo assignedBy', 'name email role');
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.post('/tasks/:id/subtasks', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const { title } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ success: false, message: 'Title required' });
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    task.subtasks.push({ title: title.trim(), done: false });
+    await task.save();
+    await task.populate('assignedTo assignedBy', 'name email role');
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.patch('/tasks/:id/subtasks/:subId', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    const sub = task.subtasks.id(req.params.subId);
+    if (!sub) return res.status(404).json({ success: false, message: 'Subtask not found' });
+    if ('done' in req.body) sub.done = !!req.body.done;
+    if ('title' in req.body && req.body.title) sub.title = req.body.title;
+    await task.save();
+    await task.populate('assignedTo assignedBy', 'name email role');
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.delete('/tasks/:id/subtasks/:subId', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    task.subtasks.pull({ _id: req.params.subId });
+    await task.save();
+    await task.populate('assignedTo assignedBy', 'name email role');
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.post('/tasks/:id/comments', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ success: false, message: 'Text required' });
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    task.comments.push({ user: req.user._id, userName: req.user.name || '', text: text.trim() });
+    await task.save();
+    await task.populate('assignedTo assignedBy', 'name email role');
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.delete('/tasks/:id/comments/:commentId', authenticate, async (req, res) => {
+  try {
+    const { Task } = require('../models');
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
+    const comment = task.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ success: false, message: 'Comment not found' });
+    const isOwner = comment.user && comment.user.toString() === req.user._id.toString();
+    const isAdminRole = ['admin', 'super_admin'].includes(req.user.role);
+    if (!isOwner && !isAdminRole) return res.status(403).json({ success: false, message: 'Not authorized' });
+    task.comments.pull({ _id: req.params.commentId });
+    await task.save();
+    await task.populate('assignedTo assignedBy', 'name email role');
+    res.json({ success: true, data: task });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 module.exports = router;

@@ -176,7 +176,19 @@ const taskSchema = new mongoose.Schema({
   deadline: { type: Date },
   priority: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
   status: { type: String, enum: ['pending', 'in_progress', 'completed', 'cancelled'], default: 'pending' },
+  column: { type: String, enum: ['backlog', 'in_progress', 'review', 'done'], default: 'backlog' },
   project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', default: null },
+  subtasks: [{
+    title: { type: String, required: true },
+    done: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now },
+  }],
+  comments: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    userName: { type: String, default: '' },
+    text: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 
 const projectSchema = new mongoose.Schema({
