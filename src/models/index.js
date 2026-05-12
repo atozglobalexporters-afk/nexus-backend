@@ -286,6 +286,47 @@ const organizationSchema = new mongoose.Schema({
   mission: { type: String, default: '' },
 }, { timestamps: true });
 
+// ── Payslip ───────────────────────────────────────────────────
+const payslipSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  month: { type: Number, required: true, min: 1, max: 12 },
+  year: { type: Number, required: true },
+  // Earnings
+  basic: { type: Number, default: 0 },
+  hra: { type: Number, default: 0 },
+  da: { type: Number, default: 0 },
+  specialAllowance: { type: Number, default: 0 },
+  bonus: { type: Number, default: 0 },
+  // Deductions
+  pf: { type: Number, default: 0 },
+  pt: { type: Number, default: 200 },
+  tds: { type: Number, default: 0 },
+  loan: { type: Number, default: 0 },
+  // Attendance
+  workingDays: { type: Number, default: 22 },
+  leaveDays: { type: Number, default: 0 },
+  overtimeHours: { type: Number, default: 0 },
+  // Computed totals
+  totalEarnings: { type: Number, default: 0 },
+  totalDeductions: { type: Number, default: 0 },
+  netPay: { type: Number, default: 0 },
+  // Lifecycle
+  status: { type: String, enum: ['draft', 'queried', 'paid'], default: 'draft' },
+  paidOn: { type: Date },
+  generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  query: {
+    text: { type: String, default: '' },
+    askedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    askedAt: { type: Date },
+    reply: { type: String, default: '' },
+    repliedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    repliedAt: { type: Date },
+    status: { type: String, enum: ['pending', 'replied'], default: 'pending' },
+  },
+}, { timestamps: true });
+
+payslipSchema.index({ user: 1, month: 1, year: 1 }, { unique: true });
+
 // ── Bank Account ──────────────────────────────────────────────
 const bankAccountSchema = new mongoose.Schema({
   nickname: { type: String, required: true, trim: true },
@@ -342,6 +383,7 @@ module.exports = {
   Announcement: mongoose.model('Announcement', announcementSchema),
   Leave: mongoose.model('Leave', leaveSchema),
   Organization: mongoose.model('Organization', organizationSchema),
+  Payslip: mongoose.model('Payslip', payslipSchema),
   BankAccount: mongoose.model('BankAccount', bankAccountSchema),
   BankTransaction: mongoose.model('BankTransaction', bankTransactionSchema),
 };

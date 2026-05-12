@@ -36,6 +36,7 @@ router.delete('/users/:id', authenticate, authorize('admin','super_admin'), c.de
 router.get  ('/attendance',                  authenticate, c.getAttendance);
 router.post ('/attendance/login',            authenticate, c.checkIn);          // check-in with late detection
 router.post ('/attendance/checkout',         authenticate, c.checkOutFull);     // check-out with status recompute
+router.post ('/attendance/undo-checkout',    authenticate, c.undoCheckout);     // undo checkout within 10 min
 router.get  ('/attendance/today',            authenticate, c.getTodayStatus);   // live working status + hours
 router.get  ('/attendance/summary',          authenticate, c.getAttendanceSummary);
 router.get  ('/attendance/monthly',          authenticate, c.getMonthlyAttendance);
@@ -60,6 +61,18 @@ router.get   ('/worklogs/download/:filename', authenticate, c.downloadWorkLogFil
 router.get ('/salaries',     authenticate, c.getSalaries);
 router.post('/salaries',     authenticate, authorize('admin','super_admin'), c.createSalary);
 router.put ('/salaries/:id', authenticate, authorize('admin','super_admin'), c.updateSalary);
+
+// ── Payslips ──────────────────────────────────────────────────
+router.get   ('/payslips',                authenticate, c.getPayslips);
+router.post  ('/payslips',                authenticate, authorize('admin','super_admin'), c.createPayslip);
+router.put   ('/payslips/:id',            authenticate, authorize('admin','super_admin'), c.updatePayslip);
+router.delete('/payslips/:id',            authenticate, authorize('admin','super_admin'), c.deletePayslip);
+router.post  ('/payslips/:id/query',      authenticate, c.queryPayslip);
+router.post  ('/payslips/:id/reply',      authenticate, authorize('admin','super_admin'), c.replyPayslipQuery);
+router.get   ('/payslips/:id/pdf',        authenticate, c.downloadPayslipPDF);
+
+// ── Quote of the Day ──────────────────────────────────────────
+router.get('/quote', authenticate, c.getQuoteOfDay);
 
 // ── Company ───────────────────────────────────────────────────
 router.get('/company',    authenticate, c.getCompany);

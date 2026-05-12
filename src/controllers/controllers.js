@@ -933,3 +933,325 @@ exports.reviewCorrection   = async (req, res) => { try { const { action, adminNo
 exports.getPendingCorrections = async (req, res) => { try { const recs = await Attendance.find({ 'correctionRequest.status': 'pending' }).populate('user','name department').sort({ 'correctionRequest.requestedAt': -1 }); ok(res, { success: true, corrections: recs }); } catch(e) { err(res, e.message); } };
 exports.autoMarkAbsent     = async (req, res) => { try { const today = new Date().toISOString().split('T')[0]; const allUsers = await User.find({ isActive: true }).select('_id'); const todayRecs = await Attendance.find({ date: today }).select('user'); const checkedIn = new Set(todayRecs.map(r => r.user.toString())); const toMark = allUsers.filter(u => !checkedIn.has(u._id.toString())); const created = []; for (const u of toMark) { const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, autoMarked: true }); created.push(att); await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent for ${today}.`, type: 'error' }); } await logAudit(req.user?.id||'system', 'AUTO_ABSENT', today, { count: created.length }, req.ip); ok(res, { success: true, count: created.length }); } catch(e) { err(res, e.message); } };
 exports.autoEndSessions    = async (req, res) => { try { const today = new Date().toISOString().split('T')[0]; const settings = await getSessionSettings(); const autoEnd = new Date(); autoEnd.setHours(settings.autoEndHour, settings.autoEndMinute, 0, 0); const active = await Attendance.find({ date: today, sessionActive: true }); let count = 0; for (const rec of active) { const { flags, status, totalHours } = computeStatus(rec.checkIn, autoEnd, settings); rec.checkOut = autoEnd; rec.totalHours = totalHours; rec.sessionActive = false; rec.status = status; rec.flags = [...new Set([...(rec.flags||[]), ...flags, 'auto_ended'])]; await rec.save(); await Notification.create({ user: rec.user, title: 'Session Auto-Ended', message: `Session ended at ${settings.autoEndHour}:${String(settings.autoEndMinute).padStart(2,'0')}. Total: ${totalHours}h`, type: 'warning' }); count++; } await logAudit(req.user?.id||'system', 'AUTO_END_SESSIONS', today, { count }, req.ip); ok(res, { success: true, count }); } catch(e) { err(res, e.message); } };
+
+// ═══════════════════════════════════════════════════════════════
+// PAYSLIPS — full CRUD + PDF generation + employee query system
+// ═══════════════════════════════════════════════════════════════
+const { Payslip } = require('../models');
+
+function computePayslipTotals(p) {
+  const earnings = (Number(p.basic)||0) + (Number(p.hra)||0) + (Number(p.da)||0) + (Number(p.specialAllowance)||0) + (Number(p.bonus)||0);
+  const deductions = (Number(p.pf)||0) + (Number(p.pt)||0) + (Number(p.tds)||0) + (Number(p.loan)||0);
+  return { totalEarnings: earnings, totalDeductions: deductions, netPay: earnings - deductions };
+}
+
+exports.getPayslips = async (req, res) => {
+  try {
+    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const { month, year, userId } = req.query;
+    const filter = isAdm ? {} : { user: req.user.id };
+    if (month) filter.month = Number(month);
+    if (year)  filter.year  = Number(year);
+    if (userId && isAdm) filter.user = userId;
+    const payslips = await Payslip.find(filter)
+      .populate('user', 'name email department jobTitle employeeId salary')
+      .populate('generatedBy', 'name')
+      .sort({ year: -1, month: -1, createdAt: -1 });
+    ok(res, { payslips });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.createPayslip = async (req, res) => {
+  try {
+    const totals = computePayslipTotals(req.body);
+    const payslip = await Payslip.create({
+      ...req.body,
+      user: req.body.userId || req.body.user,
+      ...totals,
+      generatedBy: req.user.id,
+    });
+    await payslip.populate('user', 'name email department jobTitle employeeId salary');
+    await logAudit(req.user.id, 'CREATE_PAYSLIP', payslip._id, { month: payslip.month, year: payslip.year }, req.ip);
+    await Notification.create({ user: payslip.user._id, title: 'New Payslip', message: `Payslip for ${payslip.month}/${payslip.year} is now available.`, type: 'info' });
+    ok(res, { payslip }, 201);
+  } catch (e) { err(res, e.message); }
+};
+
+exports.updatePayslip = async (req, res) => {
+  try {
+    const existing = await Payslip.findById(req.params.id);
+    if (!existing) return err(res, 'Payslip not found', 404);
+    const merged = { ...existing.toObject(), ...req.body };
+    const totals = computePayslipTotals(merged);
+    const payslip = await Payslip.findByIdAndUpdate(
+      req.params.id,
+      { ...req.body, ...totals },
+      { new: true }
+    ).populate('user', 'name email department jobTitle employeeId salary');
+    await logAudit(req.user.id, 'UPDATE_PAYSLIP', payslip._id, req.body, req.ip);
+    ok(res, { payslip });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.deletePayslip = async (req, res) => {
+  try {
+    await Payslip.findByIdAndDelete(req.params.id);
+    await logAudit(req.user.id, 'DELETE_PAYSLIP', req.params.id, {}, req.ip);
+    ok(res, { message: 'Payslip deleted' });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.queryPayslip = async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query || !query.trim()) return err(res, 'Query text required', 400);
+    const payslip = await Payslip.findById(req.params.id).populate('user', 'name');
+    if (!payslip) return err(res, 'Payslip not found', 404);
+    payslip.query = { text: query.trim(), askedBy: req.user.id, askedAt: new Date(), status: 'pending' };
+    payslip.status = 'queried';
+    await payslip.save();
+    // notify all admins
+    const admins = await User.find({ role: { $in: ['admin', 'super_admin'] }, isActive: true }).select('_id');
+    for (const adm of admins) {
+      await Notification.create({
+        user: adm._id,
+        title: 'Payslip Query',
+        message: `${payslip.user?.name || 'Employee'} has a query on payslip ${payslip.month}/${payslip.year}.`,
+        type: 'warning',
+      });
+    }
+    ok(res, { payslip });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.replyPayslipQuery = async (req, res) => {
+  try {
+    const { reply } = req.body;
+    if (!reply || !reply.trim()) return err(res, 'Reply text required', 400);
+    const payslip = await Payslip.findById(req.params.id);
+    if (!payslip) return err(res, 'Payslip not found', 404);
+    if (!payslip.query) payslip.query = {};
+    payslip.query.reply = reply.trim();
+    payslip.query.repliedBy = req.user.id;
+    payslip.query.repliedAt = new Date();
+    payslip.query.status = 'replied';
+    payslip.status = 'draft';
+    await payslip.save();
+    await Notification.create({ user: payslip.user, title: 'Payslip Query Replied', message: `Your query on payslip ${payslip.month}/${payslip.year} has a reply.`, type: 'success' });
+    ok(res, { payslip });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.downloadPayslipPDF = async (req, res) => {
+  try {
+    const PDFDocument = require('pdfkit');
+    const payslip = await Payslip.findById(req.params.id).populate('user', 'name email department jobTitle employeeId');
+    if (!payslip) return err(res, 'Payslip not found', 404);
+    // permission: own payslip or admin
+    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    if (!isAdm && payslip.user._id.toString() !== req.user.id) return err(res, 'Not authorized', 403);
+
+    const company = await Company.findOne({}) || { name: 'Nexus Enterprises Exporters Pvt. Ltd.' };
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthLabel = `${monthNames[(payslip.month||1)-1]} ${payslip.year}`;
+    const emp = payslip.user || {};
+    const totals = computePayslipTotals(payslip);
+    const earnings = payslip.totalEarnings ?? totals.totalEarnings;
+    const deductions = payslip.totalDeductions ?? totals.totalDeductions;
+    const netPay = payslip.netPay ?? totals.netPay;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="payslip-${emp.name?.replace(/\s/g,'_') || 'emp'}-${payslip.month}-${payslip.year}.pdf"`);
+
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    doc.pipe(res);
+
+    // Header
+    doc.fillColor('#0b0d14').fontSize(20).font('Helvetica-Bold').text(company.name || 'Nexus Enterprises', { align: 'left' });
+    doc.fontSize(9).font('Helvetica').fillColor('#555').text('Enterprise Management System', { align: 'left' });
+    if (company.address) doc.text(company.address);
+    doc.moveDown(0.5);
+    doc.moveTo(40, doc.y).lineTo(555, doc.y).lineWidth(2).strokeColor('#6366f1').stroke();
+    doc.moveDown(0.8);
+
+    // Title
+    doc.fillColor('#0b0d14').fontSize(16).font('Helvetica-Bold').text(`Payslip — ${monthLabel}`, { align: 'center' });
+    doc.moveDown(0.8);
+
+    // Employee details box
+    const boxY = doc.y;
+    doc.rect(40, boxY, 515, 70).fillAndStroke('#f5f6fa', '#e5e7eb');
+    doc.fillColor('#0b0d14').fontSize(10).font('Helvetica-Bold').text('Employee Name:', 50, boxY + 10);
+    doc.font('Helvetica').text(emp.name || '—', 150, boxY + 10);
+    doc.font('Helvetica-Bold').text('Employee ID:', 50, boxY + 28);
+    doc.font('Helvetica').text(emp.employeeId || emp._id?.toString().slice(-6).toUpperCase() || '—', 150, boxY + 28);
+    doc.font('Helvetica-Bold').text('Department:', 50, boxY + 46);
+    doc.font('Helvetica').text(emp.department || '—', 150, boxY + 46);
+    doc.font('Helvetica-Bold').text('Designation:', 320, boxY + 10);
+    doc.font('Helvetica').text(emp.jobTitle || '—', 420, boxY + 10);
+    doc.font('Helvetica-Bold').text('Pay Period:', 320, boxY + 28);
+    doc.font('Helvetica').text(monthLabel, 420, boxY + 28);
+    doc.font('Helvetica-Bold').text('Working Days:', 320, boxY + 46);
+    doc.font('Helvetica').text(`${payslip.workingDays || 0} (Leave: ${payslip.leaveDays || 0})`, 420, boxY + 46);
+
+    doc.y = boxY + 85;
+
+    // Earnings / Deductions table
+    const tableY = doc.y;
+    const colW = 257;
+
+    // Headers
+    doc.rect(40, tableY, colW, 24).fillAndStroke('#6366f1', '#6366f1');
+    doc.rect(40 + colW, tableY, colW, 24).fillAndStroke('#ef4444', '#ef4444');
+    doc.fillColor('#fff').fontSize(11).font('Helvetica-Bold');
+    doc.text('EARNINGS', 50, tableY + 7);
+    doc.text('DEDUCTIONS', 50 + colW, tableY + 7);
+
+    // Rows
+    const earningRows = [
+      ['Basic', payslip.basic || 0],
+      ['HRA', payslip.hra || 0],
+      ['DA', payslip.da || 0],
+      ['Special Allowance', payslip.specialAllowance || 0],
+      ['Bonus', payslip.bonus || 0],
+    ];
+    const deductionRows = [
+      ['PF', payslip.pf || 0],
+      ['Professional Tax', payslip.pt || 0],
+      ['TDS', payslip.tds || 0],
+      ['Loan/Advance', payslip.loan || 0],
+      ['', ''],
+    ];
+
+    let rowY = tableY + 24;
+    for (let i = 0; i < earningRows.length; i++) {
+      const bg = i % 2 === 0 ? '#fafafa' : '#fff';
+      doc.rect(40, rowY, colW, 22).fillAndStroke(bg, '#e5e7eb');
+      doc.rect(40 + colW, rowY, colW, 22).fillAndStroke(bg, '#e5e7eb');
+      doc.fillColor('#0b0d14').fontSize(10).font('Helvetica');
+      doc.text(earningRows[i][0], 50, rowY + 6);
+      doc.font('Helvetica-Bold').text(`Rs. ${Number(earningRows[i][1]).toLocaleString('en-IN')}`, 40 + colW - 110, rowY + 6, { width: 100, align: 'right' });
+      doc.font('Helvetica').text(deductionRows[i][0], 50 + colW, rowY + 6);
+      if (deductionRows[i][1] !== '') {
+        doc.font('Helvetica-Bold').text(`Rs. ${Number(deductionRows[i][1]).toLocaleString('en-IN')}`, 40 + 2*colW - 110, rowY + 6, { width: 100, align: 'right' });
+      }
+      rowY += 22;
+    }
+
+    // Totals row
+    doc.rect(40, rowY, colW, 28).fillAndStroke('#dcfce7', '#16a34a');
+    doc.rect(40 + colW, rowY, colW, 28).fillAndStroke('#fee2e2', '#ef4444');
+    doc.fillColor('#15803d').fontSize(11).font('Helvetica-Bold');
+    doc.text('Total Earnings', 50, rowY + 9);
+    doc.text(`Rs. ${Number(earnings).toLocaleString('en-IN')}`, 40 + colW - 110, rowY + 9, { width: 100, align: 'right' });
+    doc.fillColor('#dc2626');
+    doc.text('Total Deductions', 50 + colW, rowY + 9);
+    doc.text(`Rs. ${Number(deductions).toLocaleString('en-IN')}`, 40 + 2*colW - 110, rowY + 9, { width: 100, align: 'right' });
+
+    rowY += 40;
+
+    // Net Pay
+    doc.rect(40, rowY, 515, 50).fillAndStroke('#6366f1', '#6366f1');
+    doc.fillColor('#fff').fontSize(13).font('Helvetica-Bold').text('NET PAY', 60, rowY + 12);
+    doc.fontSize(22).text(`Rs. ${Number(netPay).toLocaleString('en-IN')}`, 60, rowY + 12, { width: 480, align: 'right' });
+    doc.fontSize(8).font('Helvetica').text(`(Rupees ${numberToWords(Number(netPay))} only)`, 60, rowY + 38);
+
+    rowY += 65;
+
+    // Footer
+    doc.fillColor('#666').fontSize(8).font('Helvetica');
+    doc.text(`Generated on ${new Date().toLocaleDateString('en-IN')} | Status: ${(payslip.status || 'draft').toUpperCase()}`, 40, rowY);
+    doc.text('This is a system-generated payslip and does not require signature.', 40, rowY + 12);
+    doc.fillColor('#6366f1').fontSize(9).font('Helvetica-Bold').text('Powered by Nexus TZ', 40, rowY + 30, { align: 'center', width: 515 });
+
+    doc.end();
+  } catch (e) {
+    console.error('PDF gen failed:', e);
+    if (!res.headersSent) err(res, e.message);
+  }
+};
+
+// Simple number-to-words for INR (handles up to crores)
+function numberToWords(num) {
+  if (num === 0) return 'Zero';
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  function two(n) { if (n < 20) return ones[n]; return tens[Math.floor(n/10)] + (n%10 ? ' ' + ones[n%10] : ''); }
+  function three(n) { return (n >= 100 ? ones[Math.floor(n/100)] + ' Hundred ' : '') + two(n%100); }
+  num = Math.floor(Math.abs(num));
+  const crore = Math.floor(num/10000000); num %= 10000000;
+  const lakh  = Math.floor(num/100000);   num %= 100000;
+  const thou  = Math.floor(num/1000);     num %= 1000;
+  const rest  = num;
+  return [crore && three(crore)+' Crore', lakh && three(lakh)+' Lakh', thou && three(thou)+' Thousand', rest && three(rest)].filter(Boolean).join(' ').trim();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ATTENDANCE — undo checkout (10s window)
+// ═══════════════════════════════════════════════════════════════
+exports.undoCheckout = async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const rec = await Attendance.findOne({ user: req.user.id, date: today });
+    if (!rec) return err(res, 'No attendance record found for today', 404);
+    if (!rec.checkOut) return err(res, 'Session is still active — nothing to undo', 400);
+    // 10-minute grace window for undo
+    const checkoutAge = Date.now() - new Date(rec.checkOut).getTime();
+    if (checkoutAge > 10 * 60 * 1000) return err(res, 'Undo window has expired (10 min)', 400);
+    rec.checkOut = null;
+    rec.totalHours = 0;
+    rec.sessionActive = true;
+    rec.status = rec.isLate ? 'late' : 'present';
+    rec.flags = (rec.flags || []).filter(f => f !== 'early_logout' && f !== 'insufficient_hours');
+    await rec.save();
+    await logAudit(req.user.id, 'UNDO_CHECKOUT', rec._id, {}, req.ip);
+    ok(res, { success: true, attendance: rec, message: 'Session resumed' });
+  } catch (e) { err(res, e.message); }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// QUOTES — daily inspirational quote (deterministic by date)
+// ═══════════════════════════════════════════════════════════════
+const QUOTES_POOL = [
+  { t: "The only way to do great work is to love what you do.", a: "Steve Jobs" },
+  { t: "Success is not final, failure is not fatal: it is the courage to continue that counts.", a: "Winston Churchill" },
+  { t: "Your time is limited, so don't waste it living someone else's life.", a: "Steve Jobs" },
+  { t: "The future belongs to those who believe in the beauty of their dreams.", a: "Eleanor Roosevelt" },
+  { t: "Don't watch the clock; do what it does. Keep going.", a: "Sam Levenson" },
+  { t: "The way to get started is to quit talking and begin doing.", a: "Walt Disney" },
+  { t: "It is during our darkest moments that we must focus to see the light.", a: "Aristotle" },
+  { t: "Whether you think you can or you think you can't, you're right.", a: "Henry Ford" },
+  { t: "The best way to predict the future is to create it.", a: "Peter Drucker" },
+  { t: "Quality is not an act, it is a habit.", a: "Aristotle" },
+  { t: "Strive not to be a success, but rather to be of value.", a: "Albert Einstein" },
+  { t: "Hard work beats talent when talent doesn't work hard.", a: "Tim Notke" },
+  { t: "The harder you work for something, the greater you'll feel when you achieve it.", a: "Anonymous" },
+  { t: "Don't be afraid to give up the good to go for the great.", a: "John D. Rockefeller" },
+  { t: "Opportunities don't happen. You create them.", a: "Chris Grosser" },
+  { t: "Success usually comes to those who are too busy to be looking for it.", a: "Henry David Thoreau" },
+  { t: "Push yourself, because no one else is going to do it for you.", a: "Anonymous" },
+  { t: "Great things never come from comfort zones.", a: "Anonymous" },
+  { t: "Dream it. Wish it. Do it.", a: "Anonymous" },
+  { t: "Don't stop when you're tired. Stop when you're done.", a: "David Goggins" },
+  { t: "Wake up with determination. Go to bed with satisfaction.", a: "George Lorimer" },
+  { t: "Do something today that your future self will thank you for.", a: "Sean Patrick Flanery" },
+  { t: "Little things make big days.", a: "Anonymous" },
+  { t: "It's going to be hard, but hard does not mean impossible.", a: "Anonymous" },
+  { t: "Don't wait for opportunity. Create it.", a: "Anonymous" },
+  { t: "The key to success is to focus on goals, not obstacles.", a: "Anonymous" },
+  { t: "Dream bigger. Do bigger.", a: "Anonymous" },
+  { t: "Excellence is not a skill, it is an attitude.", a: "Ralph Marston" },
+  { t: "Quality means doing it right when no one is looking.", a: "Henry Ford" },
+  { t: "Be so good they can't ignore you.", a: "Steve Martin" },
+];
+
+exports.getQuoteOfDay = (req, res) => {
+  try {
+    // deterministic per-day rotation: same quote all day for everyone
+    const today = new Date();
+    const dayNum = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000);
+    const idx = (dayNum + today.getFullYear() * 7) % QUOTES_POOL.length;
+    const q = QUOTES_POOL[idx];
+    ok(res, { quote: q.t, author: q.a, day: today.toISOString().split('T')[0] });
+  } catch (e) { err(res, e.message); }
+};
