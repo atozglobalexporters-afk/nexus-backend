@@ -16,6 +16,9 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
+// Trust Railway / Vercel proxy headers (fixes express-rate-limit X-Forwarded-For warning)
+app.set('trust proxy', 1);
+
 ['uploads/chat', 'uploads/avatars', 'uploads/documents'].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
@@ -91,17 +94,8 @@ io.on('connection', socket => {
 
 app.set('io', io);
 
-setInterval(async () => {
-  const { Attendance } = require('./src/models');
-  const cutoff = new Date(Date.now() - parseInt(process.env.AUTO_LOGOUT_HOURS || '10') * 3600000);
-  const stale = await Attendance.find({ checkOut: null, checkIn: { $lt: cutoff } });
-  for (const a of stale) {
-    a.checkOut = new Date();
-    a.totalHours = parseFloat(((a.checkOut - a.checkIn) / 3600000).toFixed(2));
-    a.autoClosed = true;
-    await a.save();
-  }
-}, 3600000);
+// NOTE: Legacy 10-hour auto-closer removed. The new auto-end cron in src/routes/index.js
+// handles session closure properly (uses computeStatus to recompute final status correctly).
 
 server.listen(PORT, () => console.log(`🚀 EMS Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`));
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
