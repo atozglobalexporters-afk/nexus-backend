@@ -11,7 +11,13 @@ const companySchema = new mongoose.Schema({
   address: { type: String, default: '' },
   officeStartHour: { type: Number, default: 9 },
   officeStartMinute: { type: Number, default: 0 },
+  officeEndHour: { type: Number, default: 18 },
+  officeEndMinute: { type: Number, default: 0 },
   gracePeriodMinutes: { type: Number, default: 15 },
+  minWorkingHours: { type: Number, default: 7 },
+  halfDayHours: { type: Number, default: 4 },
+  autoEndHour: { type: Number, default: 23 },
+  autoEndMinute: { type: Number, default: 59 },
 }, { timestamps: true });
 
 // ── User ──────────────────────────────────────────────────────
@@ -38,21 +44,40 @@ userSchema.virtual('isLocked').get(function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 });
 
-// ── Attendance ────────────────────────────────────────────────
+// ── Attendance (4-tier) ───────────────────────────────────────
 const attendanceSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   date: { type: String, required: true },
   checkIn: { type: Date },
   checkOut: { type: Date },
   totalHours: { type: Number, default: 0 },
-  status: { type: String, enum: ['present', 'late', 'absent', 'half-day'], default: 'absent' },
+  status: { type: String, enum: ['present', 'late', 'absent', 'half_day', 'half-day'], default: 'absent' },
   isLate: { type: Boolean, default: false },
+  lateMinutes: { type: Number, default: 0 },
+  flags: [{ type: String }],
+  sessionActive: { type: Boolean, default: false },
+  autoMarked: { type: Boolean, default: false },
+  autoClosed: { type: Boolean, default: false },
+  adminOverride: { type: Boolean, default: false },
+  adminNote: { type: String, default: '' },
+  overriddenBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  correctionRequest: {
+    status: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+    reason: { type: String, default: '' },
+    requestedCheckIn: { type: Date },
+    requestedCheckOut: { type: Date },
+    requestedAt: { type: Date },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    adminNote: { type: String, default: '' },
+  },
   ipAddress: { type: String },
   note: { type: String },
-  autoClosed: { type: Boolean, default: false },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
+attendanceSchema.index({ date: 1, sessionActive: 1 });
+attendanceSchema.index({ 'correctionRequest.status': 1 });
 
 // ── Work Log ──────────────────────────────────────────────────
 const workLogSchema = new mongoose.Schema({
@@ -138,19 +163,6 @@ const holidaySchema = new mongoose.Schema({
   type: { type: String, enum: ['holiday', 'workday'], default: 'holiday' },
 }, { timestamps: true });
 
-module.exports = {
-  Company: mongoose.model('Company', companySchema),
-  User: mongoose.model('User', userSchema),
-  Attendance: mongoose.model('Attendance', attendanceSchema),
-  WorkLog: mongoose.model('WorkLog', workLogSchema),
-  Salary: mongoose.model('Salary', salarySchema),
-  Buyer: mongoose.model('Buyer', buyerSchema),
-  Order: mongoose.model('Order', orderSchema),
-  AuditLog: mongoose.model('AuditLog', auditSchema),
-  Notification: mongoose.model('Notification', notificationSchema),
-  Holiday: mongoose.model('Holiday', holidaySchema),
-};
-
 // -- Department ------------------------------------------------
 const departmentSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, unique: true },
@@ -211,6 +223,7 @@ const timesheetSchema = new mongoose.Schema({
   totalHours: { type: Number, default: 0 },
   status: { type: String, enum: ['draft', 'submitted', 'approved', 'rejected'], default: 'draft' },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  notes: { type: String, default: '' },
 }, { timestamps: true });
 
 const payrollSchema = new mongoose.Schema({
@@ -273,16 +286,6 @@ const organizationSchema = new mongoose.Schema({
   mission: { type: String, default: '' },
 }, { timestamps: true });
 
-module.exports.Department = mongoose.model('Department', departmentSchema);
-module.exports.Shift = mongoose.model('Shift', shiftSchema);
-module.exports.Task = mongoose.model('Task', taskSchema);
-module.exports.Project = mongoose.model('Project', projectSchema);
-module.exports.Timesheet = mongoose.model('Timesheet', timesheetSchema);
-module.exports.Payroll = mongoose.model('Payroll', payrollSchema);
-module.exports.Expense = mongoose.model('Expense', expenseSchema);
-module.exports.Announcement = mongoose.model('Announcement', announcementSchema);
-module.exports.Leave = mongoose.model('Leave', leaveSchema);
-module.exports.Organization = mongoose.model('Organization', organizationSchema);
 // ── Bank Account ──────────────────────────────────────────────
 const bankAccountSchema = new mongoose.Schema({
   nickname: { type: String, required: true, trim: true },
@@ -296,7 +299,7 @@ const bankAccountSchema = new mongoose.Schema({
   status: { type: String, enum: ['active', 'closed'], default: 'active' },
   notes: { type: String, default: '' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  deletedAt: { type: Date, default: null }, // soft-delete for undo
+  deletedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 bankAccountSchema.index({ status: 1, deletedAt: 1 });
@@ -318,5 +321,27 @@ const bankTransactionSchema = new mongoose.Schema({
 
 bankTransactionSchema.index({ account: 1, date: -1 });
 
-module.exports.BankAccount = mongoose.model('BankAccount', bankAccountSchema);
-module.exports.BankTransaction = mongoose.model('BankTransaction', bankTransactionSchema);
+module.exports = {
+  Company: mongoose.model('Company', companySchema),
+  User: mongoose.model('User', userSchema),
+  Attendance: mongoose.model('Attendance', attendanceSchema),
+  WorkLog: mongoose.model('WorkLog', workLogSchema),
+  Salary: mongoose.model('Salary', salarySchema),
+  Buyer: mongoose.model('Buyer', buyerSchema),
+  Order: mongoose.model('Order', orderSchema),
+  AuditLog: mongoose.model('AuditLog', auditSchema),
+  Notification: mongoose.model('Notification', notificationSchema),
+  Holiday: mongoose.model('Holiday', holidaySchema),
+  Department: mongoose.model('Department', departmentSchema),
+  Shift: mongoose.model('Shift', shiftSchema),
+  Task: mongoose.model('Task', taskSchema),
+  Project: mongoose.model('Project', projectSchema),
+  Timesheet: mongoose.model('Timesheet', timesheetSchema),
+  Payroll: mongoose.model('Payroll', payrollSchema),
+  Expense: mongoose.model('Expense', expenseSchema),
+  Announcement: mongoose.model('Announcement', announcementSchema),
+  Leave: mongoose.model('Leave', leaveSchema),
+  Organization: mongoose.model('Organization', organizationSchema),
+  BankAccount: mongoose.model('BankAccount', bankAccountSchema),
+  BankTransaction: mongoose.model('BankTransaction', bankTransactionSchema),
+};

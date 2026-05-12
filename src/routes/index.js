@@ -32,14 +32,22 @@ router.get   ('/users/:id', authenticate, c.getUser);
 router.put   ('/users/:id', authenticate, c.updateUser);
 router.delete('/users/:id', authenticate, authorize('admin','super_admin'), c.deleteUser);
 
-// ── Attendance ────────────────────────────────────────────────
-router.get ('/attendance',         authenticate, c.getAttendance);
-router.post('/attendance/checkout',authenticate, c.checkOut);
-router.get ('/attendance/summary', authenticate, c.getAttendanceSummary);
-router.get ('/attendance/monthly', authenticate, c.getMonthlyAttendance);
-router.get ('/holidays',           authenticate, c.getHolidays);
-router.post('/holidays',           authenticate, authorize('admin','super_admin'), c.createHoliday);
-router.delete('/holidays/:id',     authenticate, authorize('admin','super_admin'), c.deleteHoliday);
+// ── Attendance (4-tier system) ────────────────────────────────
+router.get  ('/attendance',                  authenticate, c.getAttendance);
+router.post ('/attendance/login',            authenticate, c.checkIn);          // check-in with late detection
+router.post ('/attendance/checkout',         authenticate, c.checkOutFull);     // check-out with status recompute
+router.get  ('/attendance/today',            authenticate, c.getTodayStatus);   // live working status + hours
+router.get  ('/attendance/summary',          authenticate, c.getAttendanceSummary);
+router.get  ('/attendance/monthly',          authenticate, c.getMonthlyAttendance);
+router.post ('/attendance/admin-override',   authenticate, authorize('admin','super_admin'), c.adminOverride);
+router.post ('/attendance/correction',       authenticate, c.requestCorrection);
+router.put  ('/attendance/correction/:id',   authenticate, authorize('admin','super_admin'), c.reviewCorrection);
+router.get  ('/attendance/corrections',      authenticate, authorize('admin','super_admin'), c.getPendingCorrections);
+router.post ('/attendance/auto-mark-absent', authenticate, authorize('admin','super_admin'), c.autoMarkAbsent);
+router.post ('/attendance/auto-end',         authenticate, authorize('admin','super_admin'), c.autoEndSessions);
+router.get  ('/holidays',                    authenticate, c.getHolidays);
+router.post ('/holidays',                    authenticate, authorize('admin','super_admin'), c.createHoliday);
+router.delete('/holidays/:id',               authenticate, authorize('admin','super_admin'), c.deleteHoliday);
 
 // ── Work Logs ─────────────────────────────────────────────────
 router.get   ('/worklogs',          authenticate, c.getWorkLogs);
@@ -153,7 +161,7 @@ router.patch('/tasks/:id/column', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid column' });
     }
     const statusMap = { backlog: 'pending', in_progress: 'in_progress', review: 'in_progress', done: 'completed' };
-    const task = await require('../models').Task.findByIdAndUpdate(
+    const task = await Task.findByIdAndUpdate(
       req.params.id, { column, status: statusMap[column] }, { new: true }
     ).populate('assignedTo assignedBy', 'name email role');
     if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
