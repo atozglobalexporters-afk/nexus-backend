@@ -11,6 +11,24 @@ const { authenticate, authorize } = require('../middleware/auth');
 const auth = require('../controllers/authController');
 const c    = require('../controllers/controllers');
 
+// ── Background job: auto-end sessions every 10 minutes ───────
+// Self-registering (no external cron lib). Safe: idempotent, only acts after the auto-end threshold.
+if (!global.__nexusAutoEndStarted) {
+  global.__nexusAutoEndStarted = true;
+  const runAutoEnd = async () => {
+    try {
+      // Fake req/res so we can reuse the existing handler logic
+      const fakeReq = { user: { id: 'system', role: 'system' }, body: {}, ip: 'cron' };
+      const fakeRes = { status: () => fakeRes, json: () => fakeRes };
+      await c.autoEndSessions(fakeReq, fakeRes);
+    } catch (e) { console.error('[cron auto-end]', e.message); }
+  };
+  // Run after a short startup delay, then every 10 minutes
+  setTimeout(runAutoEnd, 30 * 1000);
+  setInterval(runAutoEnd, 10 * 60 * 1000);
+  console.log('[nexus] Auto-end cron registered (runs every 10 min)');
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 router.post('/auth/register',           auth.register);
 router.post('/auth/login',              auth.login);

@@ -9,13 +9,22 @@ const companySchema = new mongoose.Schema({
   email: { type: String, default: '' },
   phone: { type: String, default: '' },
   address: { type: String, default: '' },
+  // Shift definition
   officeStartHour: { type: Number, default: 9 },
   officeStartMinute: { type: Number, default: 0 },
   officeEndHour: { type: Number, default: 18 },
   officeEndMinute: { type: Number, default: 0 },
-  gracePeriodMinutes: { type: Number, default: 15 },
+  // Tolerance windows (minutes)
+  gracePeriodMinutes: { type: Number, default: 15 },        // late tolerance after shift start
+  earlyWindowMinutes: { type: Number, default: 60 },        // how early before shift can check in
+  halfDayCutoffMinutes: { type: Number, default: 60 },      // mins after grace → half-day on check-in
+  absentCutoffMinutes: { type: Number, default: 120 },      // mins after grace → absent on check-in
+  // Hour thresholds (worked hours, used at checkout)
   minWorkingHours: { type: Number, default: 7 },
   halfDayHours: { type: Number, default: 4 },
+  // Auto-end (relative to shift end)
+  autoEndBufferMinutes: { type: Number, default: 120 },     // mins after shift end to auto-close
+  // Legacy fallback (still respected if buffer = 0)
   autoEndHour: { type: Number, default: 23 },
   autoEndMinute: { type: Number, default: 59 },
 }, { timestamps: true });
@@ -51,9 +60,11 @@ const attendanceSchema = new mongoose.Schema({
   checkIn: { type: Date },
   checkOut: { type: Date },
   totalHours: { type: Number, default: 0 },
-  status: { type: String, enum: ['present', 'late', 'absent', 'half_day', 'half-day'], default: 'absent' },
+  status: { type: String, enum: ['present', 'early', 'late', 'absent', 'half_day', 'half-day', 'on_leave', 'holiday'], default: 'absent' },
   isLate: { type: Boolean, default: false },
+  isEarly: { type: Boolean, default: false },
   lateMinutes: { type: Number, default: 0 },
+  earlyMinutes: { type: Number, default: 0 },
   flags: [{ type: String }],
   sessionActive: { type: Boolean, default: false },
   autoMarked: { type: Boolean, default: false },
