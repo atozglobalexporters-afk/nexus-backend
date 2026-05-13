@@ -64,6 +64,7 @@ router.put  ('/attendance/correction/:id',   authenticate, authorize('admin','su
 router.get  ('/attendance/corrections',      authenticate, authorize('admin','super_admin'), c.getPendingCorrections);
 router.post ('/attendance/auto-mark-absent', authenticate, authorize('admin','super_admin'), c.autoMarkAbsent);
 router.post ('/attendance/auto-end',         authenticate, authorize('admin','super_admin'), c.autoEndSessions);
+router.post ('/attendance/wipe-today',        authenticate, authorize('admin','super_admin'), c.wipeTodayAttendance);
 router.get  ('/holidays',                    authenticate, c.getHolidays);
 router.post ('/holidays',                    authenticate, authorize('admin','super_admin'), c.createHoliday);
 router.delete('/holidays/:id',               authenticate, authorize('admin','super_admin'), c.deleteHoliday);
@@ -90,7 +91,11 @@ router.post  ('/payslips/:id/reply',      authenticate, authorize('admin','super
 router.get   ('/payslips/:id/pdf',        authenticate, c.downloadPayslipPDF);
 
 // ── Quote of the Day ──────────────────────────────────────────
-router.get('/quote', authenticate, c.getQuoteOfDay);
+router.get   ('/quote',         authenticate, c.getQuoteOfDay);
+router.get   ('/quotes',        authenticate, c.getQuotes);
+router.post  ('/quotes',        authenticate, authorize('admin','super_admin'), c.createQuote);
+router.put   ('/quotes/:id',    authenticate, authorize('admin','super_admin'), c.updateQuote);
+router.delete('/quotes/:id',    authenticate, authorize('admin','super_admin'), c.deleteQuote);
 
 // ── Company ───────────────────────────────────────────────────
 router.get('/company',    authenticate, c.getCompany);

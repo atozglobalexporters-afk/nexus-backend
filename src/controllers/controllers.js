@@ -1366,48 +1366,117 @@ exports.undoCheckout = async (req, res) => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// QUOTES — daily inspirational quote (deterministic by date)
+// ADMIN UTIL — wipe today's attendance (testing only)
 // ═══════════════════════════════════════════════════════════════
-const QUOTES_POOL = [
-  { t: "The only way to do great work is to love what you do.", a: "Steve Jobs" },
-  { t: "Success is not final, failure is not fatal: it is the courage to continue that counts.", a: "Winston Churchill" },
-  { t: "Your time is limited, so don't waste it living someone else's life.", a: "Steve Jobs" },
-  { t: "The future belongs to those who believe in the beauty of their dreams.", a: "Eleanor Roosevelt" },
-  { t: "Don't watch the clock; do what it does. Keep going.", a: "Sam Levenson" },
-  { t: "The way to get started is to quit talking and begin doing.", a: "Walt Disney" },
-  { t: "It is during our darkest moments that we must focus to see the light.", a: "Aristotle" },
-  { t: "Whether you think you can or you think you can't, you're right.", a: "Henry Ford" },
-  { t: "The best way to predict the future is to create it.", a: "Peter Drucker" },
-  { t: "Quality is not an act, it is a habit.", a: "Aristotle" },
-  { t: "Strive not to be a success, but rather to be of value.", a: "Albert Einstein" },
-  { t: "Hard work beats talent when talent doesn't work hard.", a: "Tim Notke" },
-  { t: "The harder you work for something, the greater you'll feel when you achieve it.", a: "Anonymous" },
-  { t: "Don't be afraid to give up the good to go for the great.", a: "John D. Rockefeller" },
-  { t: "Opportunities don't happen. You create them.", a: "Chris Grosser" },
-  { t: "Success usually comes to those who are too busy to be looking for it.", a: "Henry David Thoreau" },
-  { t: "Push yourself, because no one else is going to do it for you.", a: "Anonymous" },
-  { t: "Great things never come from comfort zones.", a: "Anonymous" },
-  { t: "Dream it. Wish it. Do it.", a: "Anonymous" },
-  { t: "Don't stop when you're tired. Stop when you're done.", a: "David Goggins" },
-  { t: "Wake up with determination. Go to bed with satisfaction.", a: "George Lorimer" },
-  { t: "Do something today that your future self will thank you for.", a: "Sean Patrick Flanery" },
-  { t: "Little things make big days.", a: "Anonymous" },
-  { t: "It's going to be hard, but hard does not mean impossible.", a: "Anonymous" },
-  { t: "Don't wait for opportunity. Create it.", a: "Anonymous" },
-  { t: "The key to success is to focus on goals, not obstacles.", a: "Anonymous" },
-  { t: "Dream bigger. Do bigger.", a: "Anonymous" },
-  { t: "Excellence is not a skill, it is an attitude.", a: "Ralph Marston" },
-  { t: "Quality means doing it right when no one is looking.", a: "Henry Ford" },
-  { t: "Be so good they can't ignore you.", a: "Steve Martin" },
-];
-
-exports.getQuoteOfDay = (req, res) => {
+exports.wipeTodayAttendance = async (req, res) => {
   try {
-    // deterministic per-day rotation: same quote all day for everyone
+    const today = new Date().toISOString().split('T')[0];
+    const { userId } = req.body || {};
+    const filter = userId ? { date: today, user: userId } : { date: today };
+    const result = await Attendance.deleteMany(filter);
+    await logAudit(req.user.id, 'WIPE_TODAY_ATTENDANCE', today, { count: result.deletedCount, userId: userId || 'all' }, req.ip);
+    ok(res, { success: true, deleted: result.deletedCount, message: `Wiped ${result.deletedCount} record(s) for ${today}` });
+  } catch (e) { err(res, e.message); }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// QUOTES — 3,200 file-based pool + admin custom additions + CRUD
+// ═══════════════════════════════════════════════════════════════
+let QUOTES_FILE = [];
+try {
+  QUOTES_FILE = require('../data/quotes');
+  console.log(`[quotes] Loaded ${QUOTES_FILE.length} file-based quotes`);
+} catch (e) {
+  console.error('[quotes] Could not load quotes file:', e.message);
+  QUOTES_FILE = [];
+}
+
+// Custom user-added quote model
+let CustomQuote;
+try {
+  CustomQuote = require('../models').Quote;
+} catch {}
+if (!CustomQuote) {
+  const mongoose = require('mongoose');
+  const quoteSchema = new mongoose.Schema({
+    text: { type: String, required: true, trim: true },
+    author: { type: String, default: 'Anonymous', trim: true },
+    category: { type: String, default: 'custom' },
+    isActive: { type: Boolean, default: true },
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  }, { timestamps: true });
+  CustomQuote = mongoose.models.Quote || mongoose.model('Quote', quoteSchema);
+}
+
+exports.getQuoteOfDay = async (req, res) => {
+  try {
+    // Build combined active pool: file + custom (active)
+    const customs = await CustomQuote.find({ isActive: true }).select('text author -_id').lean();
+    const customMapped = customs.map(c => ({ t: c.text, a: c.author }));
+    const pool = [...QUOTES_FILE, ...customMapped];
+    if (!pool.length) return ok(res, { quote: 'Bismillah — let your day begin with His name.', author: 'Reminder', day: new Date().toISOString().split('T')[0] });
+    // Deterministic per-day rotation
     const today = new Date();
     const dayNum = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000);
-    const idx = (dayNum + today.getFullYear() * 7) % QUOTES_POOL.length;
-    const q = QUOTES_POOL[idx];
-    ok(res, { quote: q.t, author: q.a, day: today.toISOString().split('T')[0] });
+    const idx = (dayNum + today.getFullYear() * 7) % pool.length;
+    const q = pool[idx];
+    ok(res, { quote: q.t, author: q.a, day: today.toISOString().split('T')[0], poolSize: pool.length });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.getQuotes = async (req, res) => {
+  try {
+    const { search = '', source = 'all', page = 1, limit = 50 } = req.query;
+    const pageNum = parseInt(page) || 1;
+    const lim = Math.min(parseInt(limit) || 50, 200);
+    const customs = await CustomQuote.find({}).sort({ createdAt: -1 }).lean();
+    // Build unified list with source flag
+    let list = [];
+    if (source === 'all' || source === 'custom') {
+      list = list.concat(customs.map(c => ({ _id: c._id, text: c.text, author: c.author, source: 'custom', isActive: c.isActive, createdAt: c.createdAt })));
+    }
+    if (source === 'all' || source === 'file') {
+      list = list.concat(QUOTES_FILE.map((q, i) => ({ _id: `file-${i}`, text: q.t, author: q.a, source: 'file', isActive: true, fileIndex: i })));
+    }
+    // Search filter
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(q => q.text.toLowerCase().includes(s) || (q.author || '').toLowerCase().includes(s));
+    }
+    const total = list.length;
+    const start = (pageNum - 1) * lim;
+    const paged = list.slice(start, start + lim);
+    ok(res, { quotes: paged, total, page: pageNum, limit: lim, totalPages: Math.ceil(total / lim), fileCount: QUOTES_FILE.length, customCount: customs.length });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.createQuote = async (req, res) => {
+  try {
+    const { text, author } = req.body;
+    if (!text || !text.trim()) return err(res, 'Text required', 400);
+    const q = await CustomQuote.create({ text: text.trim(), author: (author || 'Anonymous').trim(), addedBy: req.user.id });
+    await logAudit(req.user.id, 'CREATE_QUOTE', q._id, { text }, req.ip);
+    ok(res, { quote: q }, 201);
+  } catch (e) { err(res, e.message); }
+};
+
+exports.updateQuote = async (req, res) => {
+  try {
+    const { text, author, isActive } = req.body;
+    const q = await CustomQuote.findByIdAndUpdate(req.params.id,
+      { ...(text && { text: text.trim() }), ...(author !== undefined && { author: (author || 'Anonymous').trim() }), ...(isActive !== undefined && { isActive }) },
+      { new: true });
+    if (!q) return err(res, 'Quote not found', 404);
+    await logAudit(req.user.id, 'UPDATE_QUOTE', q._id, {}, req.ip);
+    ok(res, { quote: q });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.deleteQuote = async (req, res) => {
+  try {
+    const q = await CustomQuote.findByIdAndDelete(req.params.id);
+    if (!q) return err(res, 'Quote not found', 404);
+    await logAudit(req.user.id, 'DELETE_QUOTE', req.params.id, {}, req.ip);
+    ok(res, { success: true });
   } catch (e) { err(res, e.message); }
 };
