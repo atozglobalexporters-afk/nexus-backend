@@ -8,11 +8,14 @@ const MAX_ADMINS = 3;
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_TIME = 30 * 60 * 1000; // 30 min
 
-function signToken(user) {
+function signToken(user, rememberMe = false) {
+  const expiresIn = rememberMe
+    ? '30d'
+    : (process.env.JWT_EXPIRES_IN || '8h');
   return jwt.sign(
     { id: user._id, role: user.role, name: user.name },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+    { expiresIn }
   );
 }
 
@@ -84,7 +87,7 @@ const register = async (req, res) => {
 // POST /api/auth/login
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
     if (!email || !password) return res.status(400).json({ success:false, message:'Email and password required' });
 
     const user = await User.findOne({ email: email.toLowerCase() });
@@ -107,7 +110,7 @@ const login = async (req, res) => {
     await markAttendance(user._id, req.ip);
     await AuditLog.create({ user: user._id, action: 'LOGIN', ip: req.ip });
 
-    const token = signToken(user);
+    const token = signToken(user, !!rememberMe);
     res.json({ success:true, token, user: safeUser(user, company) });
   } catch (err) { res.status(500).json({ success:false, message: err.message }); }
 };
