@@ -514,9 +514,11 @@ exports.deleteTimesheet = async (req, res) => {
 // ── Payroll ───────────────────────────────────────────────────
 exports.getPayroll = async (req, res) => {
   try {
-    const { month } = req.query;
-    const filter    = month ? { month } : {};
-    const payroll   = await Payroll.find(filter)
+    const { month, year } = req.query;
+    const filter = {};
+    if (month) filter.month = Number(month);
+    if (year)  filter.year  = Number(year);
+    const payroll = await Payroll.find(filter)
       .populate('user','name department jobTitle')
       .populate('generatedBy','name')
       .sort({ createdAt: -1 });
@@ -527,7 +529,13 @@ exports.getPayroll = async (req, res) => {
 exports.createPayroll = async (req, res) => {
   try {
     const net = (Number(req.body.basicSalary) + Number(req.body.allowances||0)) - (Number(req.body.deductions||0) + Number(req.body.tax||0));
-    const rec = await Payroll.create({ ...req.body, netSalary: net, generatedBy: req.user.id });
+    const rec = await Payroll.create({
+      ...req.body,
+      month: Number(req.body.month),
+      year:  Number(req.body.year),
+      netSalary: net,
+      generatedBy: req.user.id,
+    });
     await rec.populate('user','name');
     await logAudit(req.user.id, 'CREATE_PAYROLL', rec._id, req.body, req.ip);
     ok(res, { payroll: rec }, 201);
@@ -536,29 +544,54 @@ exports.createPayroll = async (req, res) => {
 
 exports.generatePayroll = async (req, res) => {
   try {
-    const { month } = req.body;
-    if (!month) return err(res, 'Month required (format: 2025-05)', 400);
+    const month = Number(req.body.month);
+    const year  = Number(req.body.year);
+    if (!month || month < 1 || month > 12) return err(res, 'Valid month (1-12) required', 400);
+    if (!year  || year  < 2000 || year > 2100) return err(res, 'Valid year required', 400);
+
     const users   = await User.find({ isActive: true });
     const created = [];
+    const skipped = [];
+
+    // Build date range for attendance lookup (date field is stored as 'YYYY-MM-DD' string)
+    const mm    = String(month).padStart(2, '0');
+    const start = `${year}-${mm}-01`;
+    const end   = `${year}-${mm}-31`;
+
     for (const u of users) {
-      const existing = await Payroll.findOne({ user: u._id, month });
-      if (existing) continue;
-      const [y, m] = month.split('-');
-      const start  = `${y}-${m}-01`;
-      const end    = `${y}-${m}-31`;
+      const existing = await Payroll.findOne({ user: u._id, month, year });
+      if (existing) { skipped.push(u._id); continue; }
+
       const attRecs    = await Attendance.find({ user: u._id, date: { $gte: start, $lte: end } });
-      const daysWorked = attRecs.filter(a => ['present','late'].includes(a.status)).length;
+      const daysWorked = attRecs.filter(a => ['present','late','half_day','early'].includes(a.status)).length;
       const daysAbsent = attRecs.filter(a => a.status === 'absent').length;
-      const basic      = u.salary || 0;
+      const basic      = Number(u.salary) || 0;
+
       const rec = await Payroll.create({
-        user: u._id, month, basicSalary: basic, allowances: 0,
-        deductions: 0, tax: 0, netSalary: basic,
-        daysWorked, daysAbsent, status: 'draft', generatedBy: req.user.id,
+        user: u._id,
+        month,
+        year,
+        basicSalary: basic,
+        allowances: 0,
+        deductions: 0,
+        tax: 0,
+        netSalary: basic,
+        daysWorked,
+        daysAbsent,
+        status: 'draft',
+        generatedBy: req.user.id,
       });
       created.push(rec);
     }
-    await logAudit(req.user.id, 'GENERATE_PAYROLL', month, { count: created.length }, req.ip);
-    ok(res, { message: `Generated payroll for ${created.length} employees`, payroll: created });
+
+    await logAudit(req.user.id, 'GENERATE_PAYROLL', `${year}-${mm}`, { created: created.length, skipped: skipped.length }, req.ip);
+    ok(res, {
+      message: created.length
+        ? `Generated payroll for ${created.length} employee${created.length === 1 ? '' : 's'}${skipped.length ? ` (${skipped.length} already existed, skipped)` : ''}`
+        : `Payroll already exists for all ${skipped.length} active employee${skipped.length === 1 ? '' : 's'} for ${mm}/${year}`,
+      payroll: created,
+      skipped: skipped.length,
+    });
   } catch (e) { err(res, e.message); }
 };
 
