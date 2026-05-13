@@ -91,11 +91,12 @@ router.post  ('/payslips/:id/reply',      authenticate, authorize('admin','super
 router.get   ('/payslips/:id/pdf',        authenticate, c.downloadPayslipPDF);
 
 // ── Quote of the Day ──────────────────────────────────────────
-router.get   ('/quote',         authenticate, c.getQuoteOfDay);
-router.get   ('/quotes',        authenticate, c.getQuotes);
-router.post  ('/quotes',        authenticate, authorize('admin','super_admin'), c.createQuote);
-router.put   ('/quotes/:id',    authenticate, authorize('admin','super_admin'), c.updateQuote);
-router.delete('/quotes/:id',    authenticate, authorize('admin','super_admin'), c.deleteQuote);
+router.get   ('/quote',           authenticate, c.getQuoteOfDay);
+router.post  ('/quote/shuffle',   authenticate, authorize('admin','super_admin'), c.shuffleQuote);
+router.get   ('/quotes',          authenticate, c.getQuotes);
+router.post  ('/quotes',          authenticate, authorize('admin','super_admin'), c.createQuote);
+router.put   ('/quotes/:id',      authenticate, authorize('admin','super_admin'), c.updateQuote);
+router.delete('/quotes/:id',      authenticate, authorize('admin','super_admin'), c.deleteQuote);
 
 // ── Company ───────────────────────────────────────────────────
 router.get('/company',    authenticate, c.getCompany);

@@ -1408,19 +1408,71 @@ if (!CustomQuote) {
   CustomQuote = mongoose.models.Quote || mongoose.model('Quote', quoteSchema);
 }
 
+// Override quote for the day (admin shuffle / pick)
+let DailyOverride;
+{
+  const mongoose = require('mongoose');
+  const overrideSchema = new mongoose.Schema({
+    date: { type: String, required: true, unique: true },
+    text: { type: String, required: true },
+    author: { type: String, default: 'Anonymous' },
+    setBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  }, { timestamps: true });
+  DailyOverride = mongoose.models.DailyQuoteOverride || mongoose.model('DailyQuoteOverride', overrideSchema);
+}
+
+function getCombinedPool(customs) {
+  return [...QUOTES_FILE, ...customs.map(c => ({ t: c.text, a: c.author }))];
+}
+
 exports.getQuoteOfDay = async (req, res) => {
   try {
-    // Build combined active pool: file + custom (active)
+    const today = new Date().toISOString().split('T')[0];
+    // Check if today has an override
+    const override = await DailyOverride.findOne({ date: today });
+    if (override) {
+      return ok(res, { quote: override.text, author: override.author, day: today, overridden: true });
+    }
+    // Fall back to combined pool, deterministic per day
     const customs = await CustomQuote.find({ isActive: true }).select('text author -_id').lean();
-    const customMapped = customs.map(c => ({ t: c.text, a: c.author }));
-    const pool = [...QUOTES_FILE, ...customMapped];
-    if (!pool.length) return ok(res, { quote: 'Bismillah — let your day begin with His name.', author: 'Reminder', day: new Date().toISOString().split('T')[0] });
-    // Deterministic per-day rotation
-    const today = new Date();
-    const dayNum = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000);
-    const idx = (dayNum + today.getFullYear() * 7) % pool.length;
+    const pool = getCombinedPool(customs);
+    if (!pool.length) return ok(res, { quote: 'Bismillah — let your day begin with His name.', author: 'Reminder', day: today });
+    const td = new Date();
+    const dayNum = Math.floor((td - new Date(td.getFullYear(), 0, 0)) / 86400000);
+    const idx = (dayNum + td.getFullYear() * 7) % pool.length;
     const q = pool[idx];
-    ok(res, { quote: q.t, author: q.a, day: today.toISOString().split('T')[0], poolSize: pool.length });
+    ok(res, { quote: q.t, author: q.a, day: today, poolSize: pool.length });
+  } catch (e) { err(res, e.message); }
+};
+
+// Admin: shuffle to random / set specific / clear override
+exports.shuffleQuote = async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { quoteText, quoteAuthor, clear } = req.body || {};
+    if (clear) {
+      await DailyOverride.deleteOne({ date: today });
+      return ok(res, { success: true, cleared: true });
+    }
+    let text, author;
+    if (quoteText) {
+      // Admin chose a specific one
+      text = quoteText; author = quoteAuthor || 'Anonymous';
+    } else {
+      // Pick random from active pool
+      const customs = await CustomQuote.find({ isActive: true }).select('text author -_id').lean();
+      const pool = getCombinedPool(customs);
+      if (!pool.length) return err(res, 'No quotes in pool', 400);
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      text = pick.t; author = pick.a;
+    }
+    const override = await DailyOverride.findOneAndUpdate(
+      { date: today },
+      { text, author, setBy: req.user.id },
+      { upsert: true, new: true }
+    );
+    await logAudit(req.user.id, 'SHUFFLE_QUOTE', today, { text, author }, req.ip);
+    ok(res, { success: true, quote: override.text, author: override.author, day: today });
   } catch (e) { err(res, e.message); }
 };
 
@@ -1430,7 +1482,6 @@ exports.getQuotes = async (req, res) => {
     const pageNum = parseInt(page) || 1;
     const lim = Math.min(parseInt(limit) || 50, 200);
     const customs = await CustomQuote.find({}).sort({ createdAt: -1 }).lean();
-    // Build unified list with source flag
     let list = [];
     if (source === 'all' || source === 'custom') {
       list = list.concat(customs.map(c => ({ _id: c._id, text: c.text, author: c.author, source: 'custom', isActive: c.isActive, createdAt: c.createdAt })));
@@ -1438,7 +1489,6 @@ exports.getQuotes = async (req, res) => {
     if (source === 'all' || source === 'file') {
       list = list.concat(QUOTES_FILE.map((q, i) => ({ _id: `file-${i}`, text: q.t, author: q.a, source: 'file', isActive: true, fileIndex: i })));
     }
-    // Search filter
     if (search) {
       const s = search.toLowerCase();
       list = list.filter(q => q.text.toLowerCase().includes(s) || (q.author || '').toLowerCase().includes(s));
