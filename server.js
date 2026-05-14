@@ -133,6 +133,17 @@ async function repairCorruptedUserDates() {
       }
     }
     console.log(`🔧 User date repair complete — ${fixed} document(s) fixed, ${all.length} checked.`);
+
+    // ── ONE-TIME ADMIN PASSWORD RESET ──
+    // Locked-out admin account recovery. Sets a known password + clears lock state.
+    // REMOVE THIS BLOCK once login is confirmed working.
+    const RESET_EMAIL = 'syedzaidtoufeeq@gmail.com';
+    const RESET_HASH  = '$2b$12$R0bBSNdh6MaVd6GG940cEOO9qxXhNipFuwYNRIQfdc8xo409BOtfq'; // password: 786786786
+    const r = await coll.updateOne(
+      { email: RESET_EMAIL },
+      { $set: { password: RESET_HASH, isActive: true, loginAttempts: 0, lockUntil: null } }
+    );
+    console.log(`🔑 Admin password reset for ${RESET_EMAIL} — matched ${r.matchedCount}, modified ${r.modifiedCount}.`);
   } catch (e) {
     console.error('⚠️  User date repair failed:', e.message);
   }
