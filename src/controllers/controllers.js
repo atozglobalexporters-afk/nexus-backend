@@ -173,7 +173,12 @@ exports.createWorkLog = async (req, res) => {
 
 exports.updateWorkLog = async (req, res) => {
   try {
-    const log = await WorkLog.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const body = { ...req.body };
+    // Keep status <-> approved in sync (frontend sends status, legacy code reads approved)
+    if (body.status === 'approved') { body.approved = true;  body.approvedBy = req.user.id; }
+    if (body.status === 'rejected') { body.approved = false; body.approvedBy = req.user.id; }
+    if (body.status === 'pending')  { body.approved = false; body.approvedBy = undefined; }
+    const log = await WorkLog.findByIdAndUpdate(req.params.id, body, { new: true });
     if (!log) return err(res, 'Not found', 404);
     await logAudit(req.user.id, 'UPDATE_WORKLOG', req.params.id, req.body, req.ip);
     ok(res, { worklog: log });

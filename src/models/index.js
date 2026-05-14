@@ -98,6 +98,7 @@ const workLogSchema = new mongoose.Schema({
   hoursWorked: { type: Number, default: 0 },
   tasks: [{ title: String, status: { type: String, enum: ['done', 'in-progress', 'pending'], default: 'done' } }],
   files: [{ filename: String, originalName: String, size: Number, mimetype: String, url: String }],
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   approved: { type: Boolean, default: false },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
@@ -288,13 +289,22 @@ const leaveSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const organizationSchema = new mongoose.Schema({
-  companyName: { type: String, required: true },
-  industry: { type: String, default: '' },
-  founded: { type: String, default: '' },
+  // Primary identity — frontend uses `name`; keep `companyName` as legacy alias
+  name:         { type: String, default: 'Nexus Enterprises' },
+  companyName:  { type: String, default: '' },
+  industry:     { type: String, default: '' },
+  // Frontend sends `foundedYear`; keep `founded` for legacy
+  foundedYear:  { type: String, default: '' },
+  founded:      { type: String, default: '' },
+  // Frontend sends `address`; keep `headquarters` for legacy
+  address:      { type: String, default: '' },
   headquarters: { type: String, default: '' },
-  description: { type: String, default: '' },
-  vision: { type: String, default: '' },
-  mission: { type: String, default: '' },
+  phone:        { type: String, default: '' },
+  email:        { type: String, default: '' },
+  website:      { type: String, default: '' },
+  description:  { type: String, default: '' },
+  vision:       { type: String, default: '' },
+  mission:      { type: String, default: '' },
 }, { timestamps: true });
 
 // ── Payslip ───────────────────────────────────────────────────
