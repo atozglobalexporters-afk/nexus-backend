@@ -378,23 +378,63 @@ exports.deleteDepartment = async (req, res) => {
 // ── Shifts ────────────────────────────────────────────────────
 exports.getShifts = async (req, res) => {
   try {
-    const shifts = await Shift.find({}).populate('assignedTo','name department');
+    const shifts = await Shift.find({})
+      .populate('assignedTo','name department team')
+      .populate('employee','name department team')
+      .sort({ updatedAt: -1 });
     ok(res, { shifts });
   } catch (e) { err(res, e.message); }
 };
 
+function normalizeShiftPayload(body) {
+  const payload = { ...body };
+
+  if (payload.scope === 'all' || payload.scope === 'all_employees') {
+    payload.scope = 'company';
+  }
+
+  if (payload.scope === 'company') {
+    payload.department = '';
+    payload.team = '';
+    payload.employee = null;
+    payload.assignedTo = [];
+  }
+
+  if (payload.scope === 'department') {
+    payload.team = '';
+    payload.employee = null;
+    payload.assignedTo = [];
+  }
+
+  if (payload.scope === 'team') {
+    payload.employee = null;
+    payload.assignedTo = [];
+  }
+
+  if (payload.scope === 'employee') {
+    if (payload.employee && (!payload.assignedTo || !payload.assignedTo.length)) {
+      payload.assignedTo = [payload.employee];
+    }
+  }
+
+  return payload;
+}
+
 exports.createShift = async (req, res) => {
   try {
-    const shift = await Shift.create(req.body);
-    await logAudit(req.user.id, 'CREATE_SHIFT', shift._id, req.body, req.ip);
+    const payload = normalizeShiftPayload(req.body);
+    const shift = await Shift.create(payload);
+    await logAudit(req.user.id, 'CREATE_SHIFT', shift._id, payload, req.ip);
     ok(res, { shift }, 201);
   } catch (e) { err(res, e.message); }
 };
 
 exports.updateShift = async (req, res) => {
   try {
-    const shift = await Shift.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const payload = normalizeShiftPayload(req.body);
+    const shift = await Shift.findByIdAndUpdate(req.params.id, payload, { new: true });
     if (!shift) return err(res, 'Not found', 404);
+    await logAudit(req.user.id, 'UPDATE_SHIFT', shift._id, payload, req.ip);
     ok(res, { shift });
   } catch (e) { err(res, e.message); }
 };
@@ -1007,7 +1047,7 @@ async function getSessionSettings(userId = null) {
     if (departmentShift) return settingsFromShift(departmentShift, 'department');
   }
 
-  const companyShift = await Shift.findOne({ isActive: true, scope: 'company' }).sort({ updatedAt: -1 });
+  const companyShift = await Shift.findOne({ isActive: true, scope: { $in: ['company', 'all', 'all_employees'] } }).sort({ updatedAt: -1 });
   if (companyShift) return settingsFromShift(companyShift, 'company');
 
   return companySettings;
@@ -1704,3 +1744,4 @@ exports.deleteQuote = async (req, res) => {
     ok(res, { success: true });
   } catch (e) { err(res, e.message); }
 };
+
