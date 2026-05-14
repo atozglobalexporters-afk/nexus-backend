@@ -97,5 +97,49 @@ app.set('io', io);
 // NOTE: Legacy 10-hour auto-closer removed. The new auto-end cron in src/routes/index.js
 // handles session closure properly (uses computeStatus to recompute final status correctly).
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ONE-TIME REPAIR: fix corrupted createdAt/updatedAt fields on User documents.
+// Some user docs were saved with date fields as objects { $date: "..." } instead
+// of real BSON dates, which makes Mongoose throw "Cast to date failed" on login.
+// This runs once on boot, repairs every affected doc directly via the raw driver
+// (bypassing Mongoose casting), then logs the result. Safe to leave in — it's a
+// no-op once all docs are clean. Remove after confirming login works.
+// ─────────────────────────────────────────────────────────────────────────────
+async function repairCorruptedUserDates() {
+  try {
+    const coll = mongoose.connection.db.collection('users');
+    const all = await coll.find({}).toArray();
+    let fixed = 0;
+    for (const u of all) {
+      const update = {};
+      // If createdAt is an object (not a Date), unwrap or regenerate it
+      if (u.createdAt && typeof u.createdAt === 'object' && !(u.createdAt instanceof Date)) {
+        const raw = u.createdAt.$date || u.createdAt['$date'];
+        const d = raw ? new Date(raw) : new Date();
+        update.createdAt = isNaN(d.getTime()) ? new Date() : d;
+      }
+      if (u.updatedAt && typeof u.updatedAt === 'object' && !(u.updatedAt instanceof Date)) {
+        const raw = u.updatedAt.$date || u.updatedAt['$date'];
+        const d = raw ? new Date(raw) : new Date();
+        update.updatedAt = isNaN(d.getTime()) ? new Date() : d;
+      }
+      // Also clear any stale lock state left over from failed logins
+      if (u.lockUntil && typeof u.lockUntil === 'object' && !(u.lockUntil instanceof Date)) {
+        update.lockUntil = null;
+      }
+      if (Object.keys(update).length > 0) {
+        await coll.updateOne({ _id: u._id }, { $set: update });
+        fixed++;
+      }
+    }
+    console.log(`🔧 User date repair complete — ${fixed} document(s) fixed, ${all.length} checked.`);
+  } catch (e) {
+    console.error('⚠️  User date repair failed:', e.message);
+  }
+}
+
+// Run repair once the DB connection is ready
+mongoose.connection.once('open', () => { repairCorruptedUserDates(); });
+
 server.listen(PORT, () => console.log(`🚀 EMS Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`));
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
