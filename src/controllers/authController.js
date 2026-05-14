@@ -8,14 +8,11 @@ const MAX_ADMINS = 3;
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_TIME = 30 * 60 * 1000; // 30 min
 
-function signToken(user, rememberMe = false) {
-  const expiresIn = rememberMe
-    ? '30d'
-    : (process.env.JWT_EXPIRES_IN || '8h');
+function signToken(user) {
   return jwt.sign(
     { id: user._id, role: user.role, name: user.name },
     process.env.JWT_SECRET,
-    { expiresIn }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );
 }
 
@@ -87,7 +84,7 @@ const register = async (req, res) => {
 // POST /api/auth/login
 const login = async (req, res) => {
   try {
-    const { email, password, rememberMe } = req.body;
+    const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success:false, message:'Email and password required' });
 
     const user = await User.findOne({ email: email.toLowerCase() });
@@ -110,7 +107,7 @@ const login = async (req, res) => {
     await markAttendance(user._id, req.ip);
     await AuditLog.create({ user: user._id, action: 'LOGIN', ip: req.ip });
 
-    const token = signToken(user, !!rememberMe);
+    const token = signToken(user);
     res.json({ success:true, token, user: safeUser(user, company) });
   } catch (err) { res.status(500).json({ success:false, message: err.message }); }
 };
@@ -176,13 +173,37 @@ const forgotPassword = async (req, res) => {
     user.resetPasswordToken   = token;
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1h
     await user.save();
-    // Send email (fire-and-forget)
+
+    // Send email — errors are logged AND surfaced so failures aren't silent
+    const port    = parseInt(process.env.SMTP_PORT || '587', 10);
+    const baseUrl = process.env.CLIENT_URL || 'https://atoz-ems-frontend-sr59.vercel.app';
+    let emailSent = false;
     try {
       const nodemailer = require('nodemailer');
-      const t = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: process.env.SMTP_PORT, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } });
-      await t.sendMail({ from: process.env.SMTP_USER, to: user.email, subject: 'Password Reset', text: `Reset your password: ${process.env.CLIENT_URL}/reset-password/${token}\n\nExpires in 1 hour.` });
-    } catch {}
-    res.json({ success:true, message:'If that email exists, a reset link was sent.' });
+      const t = nodemailer.createTransport({
+        host:   process.env.SMTP_HOST,
+        port,
+        secure: port === 465,            // 465 = SSL, 587 = STARTTLS
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      });
+      await t.sendMail({
+        from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+        to:      user.email,
+        subject: 'Nexus Pro — Password Reset',
+        text:    `You requested a password reset.\n\nReset link: ${baseUrl}/reset-password/${token}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
+      });
+      emailSent = true;
+      console.log(`✉️  Password reset email sent to ${user.email}`);
+    } catch (mailErr) {
+      console.error(`⚠️  Password reset email FAILED for ${user.email}:`, mailErr.message);
+    }
+
+    if (emailSent) {
+      res.json({ success:true, message:'Reset link sent — check your email (and spam folder).' });
+    } else {
+      // Don't pretend it worked. Tell the user + give the token path for admin recovery.
+      res.status(502).json({ success:false, message:'Could not send reset email. Please contact your administrator.' });
+    }
   } catch (err) { res.status(500).json({ success:false, message: err.message }); }
 };
 
