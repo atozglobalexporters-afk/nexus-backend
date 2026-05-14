@@ -51,10 +51,24 @@ exports.getUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const { password, ...rest } = req.body;
-    const user = await User.findByIdAndUpdate(req.params.id, rest, { new: true }).select('-password');
+    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const isSelf = req.params.id === req.user.id;
+    if (!isAdm && !isSelf) return err(res, 'Forbidden', 403);
+
+    const blockedAlways = ['password', 'role', 'loginAttempts', 'lockUntil', 'resetPasswordToken', 'resetPasswordExpires'];
+    const selfAllowed = ['name', 'phone', 'avatar'];
+    const adminAllowed = ['name', 'email', 'jobTitle', 'department', 'team', 'phone', 'avatar', 'salary', 'salaryStatus', 'isActive'];
+    const allowed = isAdm ? adminAllowed : selfAllowed;
+
+    const update = {};
+    for (const [key, value] of Object.entries(req.body || {})) {
+      if (blockedAlways.includes(key)) continue;
+      if (allowed.includes(key)) update[key] = value;
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('-password');
     if (!user) return err(res, 'User not found', 404);
-    await logAudit(req.user.id, 'UPDATE_USER', req.params.id, rest, req.ip);
+    await logAudit(req.user.id, 'UPDATE_USER', req.params.id, update, req.ip);
     ok(res, { user });
   } catch (e) { err(res, e.message); }
 };
@@ -868,23 +882,135 @@ exports.getTasksReport = async (req, res) => {
 };
 
 // ── Session helpers ───────────────────────────────────────────
-async function getSessionSettings() {
-  const company = await Company.findOne();
+function parseHHMM(value, fallbackHour = 9, fallbackMinute = 0) {
+  if (!value || typeof value !== 'string' || !value.includes(':')) {
+    return { hour: fallbackHour, minute: fallbackMinute };
+  }
+  const [h, m] = value.split(':').map(Number);
   return {
+    hour: Number.isFinite(h) ? h : fallbackHour,
+    minute: Number.isFinite(m) ? m : fallbackMinute,
+  };
+}
+
+function minutesOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function buildCompanyLegacySettings(company) {
+  return {
+    source: 'company_legacy',
+    shiftId: null,
+    name: company?.name ? `${company.name} Default Shift` : 'Company Default Shift',
     startHour:           company?.officeStartHour      ?? parseInt(process.env.OFFICE_START_HOUR     || '9'),
     startMinute:         company?.officeStartMinute    ?? parseInt(process.env.OFFICE_START_MINUTE   || '0'),
     endHour:             company?.officeEndHour        ?? parseInt(process.env.OFFICE_END_HOUR       || '18'),
     endMinute:           company?.officeEndMinute      ?? parseInt(process.env.OFFICE_END_MINUTE     || '0'),
     gracePeriod:         company?.gracePeriodMinutes   ?? parseInt(process.env.GRACE_PERIOD_MINUTES  || '15'),
-    earlyWindow:         company?.earlyWindowMinutes   ?? parseInt(process.env.EARLY_WINDOW_MINUTES  || '60'),
-    halfDayCutoffMins:   company?.halfDayCutoffMinutes ?? parseInt(process.env.HALFDAY_CUTOFF_MINUTES|| '60'),
-    absentCutoffMins:    company?.absentCutoffMinutes  ?? parseInt(process.env.ABSENT_CUTOFF_MINUTES || '120'),
-    minHours:            company?.minWorkingHours      ?? parseFloat(process.env.MIN_WORKING_HOURS   || '7'),
-    halfDayHours:        company?.halfDayHours         ?? parseFloat(process.env.HALF_DAY_HOURS      || '4'),
-    autoEndBufferMins:   company?.autoEndBufferMinutes ?? parseInt(process.env.AUTO_END_BUFFER_MIN   || '120'),
+    earlyWindow:         company?.earlyWindowMinutes   ?? parseInt(process.env.EARLY_WINDOW_MINUTES  || '30'),
+    halfDayCutoffMins:   company?.halfDayCutoffMinutes ?? parseInt(process.env.HALFDAY_CUTOFF_MINUTES|| '105'),
+    absentCutoffMins:    company?.absentCutoffMinutes  ?? parseInt(process.env.ABSENT_CUTOFF_MINUTES || '165'),
+    minHours:            company?.minWorkingHours      ?? parseFloat(process.env.MIN_WORKING_HOURS   || '4'),
+    halfDayHours:        company?.halfDayHours         ?? parseFloat(process.env.HALF_DAY_HOURS      || '2'),
+    autoEndBufferMins:   company?.autoEndBufferMinutes ?? parseInt(process.env.AUTO_END_BUFFER_MIN   || '0'),
     autoEndHour:         company?.autoEndHour          ?? parseInt(process.env.AUTO_END_HOUR         || '23'),
     autoEndMinute:       company?.autoEndMinute        ?? parseInt(process.env.AUTO_END_MINUTE       || '59'),
   };
+}
+
+function settingsFromShift(shift, source) {
+  const st = parseHHMM(shift.startTime, 9, 0);
+  const en = parseHHMM(shift.endTime, 18, 0);
+  return {
+    source,
+    shiftId: shift._id,
+    name: shift.name,
+    startHour: st.hour,
+    startMinute: st.minute,
+    endHour: en.hour,
+    endMinute: en.minute,
+    gracePeriod: minutesOr(shift.gracePeriodMinutes, 15),
+    earlyWindow: minutesOr(shift.earlyWindowMinutes, 30),
+    halfDayCutoffMins: minutesOr(shift.halfDayCutoffMinutes, 105),
+    absentCutoffMins: minutesOr(shift.absentCutoffMinutes, 165),
+    minHours: minutesOr(shift.minWorkingHours, 4),
+    halfDayHours: minutesOr(shift.halfDayHours, 2),
+    autoEndBufferMins: minutesOr(shift.autoEndBufferMinutes, 0),
+    autoEndHour: 23,
+    autoEndMinute: 59,
+  };
+}
+
+function snapshotFromSettings(settings) {
+  const pad = n => String(n).padStart(2, '0');
+  return {
+    name: settings.name || '',
+    startTime: `${pad(settings.startHour)}:${pad(settings.startMinute)}`,
+    endTime: `${pad(settings.endHour)}:${pad(settings.endMinute)}`,
+    gracePeriodMinutes: settings.gracePeriod,
+    earlyWindowMinutes: settings.earlyWindow,
+    halfDayCutoffMinutes: settings.halfDayCutoffMins,
+    absentCutoffMinutes: settings.absentCutoffMins,
+    minWorkingHours: settings.minHours,
+    halfDayHours: settings.halfDayHours,
+    autoEndBufferMinutes: settings.autoEndBufferMins,
+  };
+}
+
+function settingsFromAttendance(rec) {
+  if (!rec?.shiftSnapshot?.startTime) return null;
+  const st = parseHHMM(rec.shiftSnapshot.startTime, 9, 0);
+  const en = parseHHMM(rec.shiftSnapshot.endTime, 18, 0);
+  return {
+    source: rec.shiftSource || 'snapshot',
+    shiftId: rec.shiftId || null,
+    name: rec.shiftSnapshot.name || 'Attendance Snapshot',
+    startHour: st.hour,
+    startMinute: st.minute,
+    endHour: en.hour,
+    endMinute: en.minute,
+    gracePeriod: minutesOr(rec.shiftSnapshot.gracePeriodMinutes, 15),
+    earlyWindow: minutesOr(rec.shiftSnapshot.earlyWindowMinutes, 30),
+    halfDayCutoffMins: minutesOr(rec.shiftSnapshot.halfDayCutoffMinutes, 105),
+    absentCutoffMins: minutesOr(rec.shiftSnapshot.absentCutoffMinutes, 165),
+    minHours: minutesOr(rec.shiftSnapshot.minWorkingHours, 4),
+    halfDayHours: minutesOr(rec.shiftSnapshot.halfDayHours, 2),
+    autoEndBufferMins: minutesOr(rec.shiftSnapshot.autoEndBufferMinutes, 0),
+    autoEndHour: 23,
+    autoEndMinute: 59,
+  };
+}
+
+async function getSessionSettings(userId = null) {
+  const company = await Company.findOne();
+  const companySettings = buildCompanyLegacySettings(company);
+  if (!userId) return companySettings;
+
+  const user = await User.findById(userId).select('department team').lean();
+  if (!user) return companySettings;
+
+  // Priority: individual > legacy assigned user > team > department > company shift > company legacy fields.
+  const employeeShift = await Shift.findOne({ isActive: true, scope: 'employee', employee: userId }).sort({ updatedAt: -1 });
+  if (employeeShift) return settingsFromShift(employeeShift, 'employee');
+
+  const legacyAssigned = await Shift.findOne({ isActive: true, assignedTo: userId }).sort({ updatedAt: -1 });
+  if (legacyAssigned) return settingsFromShift(legacyAssigned, 'legacy_assigned_user');
+
+  if (user.team) {
+    const teamShift = await Shift.findOne({ isActive: true, scope: 'team', team: user.team }).sort({ updatedAt: -1 });
+    if (teamShift) return settingsFromShift(teamShift, 'team');
+  }
+
+  if (user.department) {
+    const departmentShift = await Shift.findOne({ isActive: true, scope: 'department', department: user.department }).sort({ updatedAt: -1 });
+    if (departmentShift) return settingsFromShift(departmentShift, 'department');
+  }
+
+  const companyShift = await Shift.findOne({ isActive: true, scope: 'company' }).sort({ updatedAt: -1 });
+  if (companyShift) return settingsFromShift(companyShift, 'company');
+
+  return companySettings;
 }
 
 // Returns { shiftStart, shiftEnd, graceCutoff, halfDayCutoff, absentCutoff, earlyOpen, autoEnd } as Date objects for the supplied reference day.
@@ -898,9 +1024,9 @@ function buildShiftWindows(refDate, settings) {
   const halfDayCutoff = new Date(graceCutoff.getTime() + settings.halfDayCutoffMins * 60000);
   const absentCutoff  = new Date(graceCutoff.getTime() + settings.absentCutoffMins * 60000);
   const earlyOpen     = new Date(shiftStart.getTime() - settings.earlyWindow * 60000);
-  // Auto-end = shift end + buffer (preferred). If buffer = 0, fallback to autoEndHour:autoEndMinute.
+  // Auto-end = shift end + buffer. If buffer is 0, auto-end exactly at shift end.
   let autoEnd;
-  if (settings.autoEndBufferMins > 0) {
+  if (settings.autoEndBufferMins >= 0) {
     autoEnd = new Date(shiftEnd.getTime() + settings.autoEndBufferMins * 60000);
   } else {
     autoEnd = new Date(d); autoEnd.setHours(settings.autoEndHour, settings.autoEndMinute, 0, 0);
@@ -986,7 +1112,7 @@ exports.checkIn = async (req, res) => {
       }
       // existing record with no checkIn (e.g. auto-marked absent) — allow new check-in to overwrite
     }
-    const settings = await getSessionSettings();
+    const settings = await getSessionSettings(req.user.id);
     const now      = new Date();
     const cls      = classifyCheckIn(now, settings);
     if (!cls.allowed) {
@@ -1004,6 +1130,12 @@ exports.checkIn = async (req, res) => {
       checkOut: null,
       totalHours: 0,
       autoMarked: false,
+      loginStatus: 'online',
+      sessionStartedAt: now,
+      sessionEndedAt: null,
+      shiftSource: settings.source,
+      shiftId: settings.shiftId,
+      shiftSnapshot: snapshotFromSettings(settings),
     };
     let att;
     if (existing) {
@@ -1025,7 +1157,7 @@ exports.checkOutFull = async (req, res) => {
     const rec   = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return res.status(400).json({ success: false, message: 'No check-in found.' });
     if (!rec.sessionActive && rec.checkOut) return res.status(400).json({ success: false, message: 'Session already ended.', attendance: rec });
-    const settings = await getSessionSettings();
+    const settings = settingsFromAttendance(rec) || await getSessionSettings(req.user.id);
     const now      = new Date();
     // Rebuild the check-in classification from the stored fields so downgrade logic respects original status
     const checkInClass = {
@@ -1038,6 +1170,8 @@ exports.checkOutFull = async (req, res) => {
     rec.checkOut = now;
     rec.totalHours = totalHours;
     rec.sessionActive = false;
+    rec.loginStatus = 'offline';
+    rec.sessionEndedAt = now;
     rec.status = status;
     rec.flags = flags;
     await rec.save();
@@ -1052,7 +1186,7 @@ exports.getTodayStatus = async (req, res) => {
   try {
     const today    = new Date().toISOString().split('T')[0];
     const rec      = await Attendance.findOne({ user: req.user.id, date: today });
-    const settings = await getSessionSettings();
+    const settings = rec ? (settingsFromAttendance(rec) || await getSessionSettings(req.user.id)) : await getSessionSettings(req.user.id);
     const now      = new Date();
     const windows  = buildShiftWindows(now, settings);
     let liveStatus = 'not_started', liveHours = 0;
@@ -1088,30 +1222,32 @@ exports.getTodayStatus = async (req, res) => {
 };
 
 
-exports.adminOverride      = async (req, res) => { try { const { userId, date, status, checkIn, checkOut, note } = req.body; if (!userId || !date || !status) return err(res, 'userId, date and status required', 400); const settings = await getSessionSettings(); let totalHours = 0, flags = []; if (checkIn && checkOut) { const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status, flags: [], isLate: false, isEarly: false }); totalHours = r.totalHours; flags = r.flags; } const att = await Attendance.findOneAndUpdate({ user: userId, date }, { user: userId, date, status, checkIn: checkIn||null, checkOut: checkOut||null, totalHours, flags, sessionActive: false, adminOverride: true, adminNote: note||'', overriddenBy: req.user.id }, { upsert: true, new: true }); await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
+exports.adminOverride      = async (req, res) => { try { const { userId, date, status, checkIn, checkOut, note } = req.body; if (!userId || !date || !status) return err(res, 'userId, date and status required', 400); const settings = await getSessionSettings(userId); let totalHours = 0, flags = []; if (checkIn && checkOut) { const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status, flags: [], isLate: false, isEarly: false }); totalHours = r.totalHours; flags = r.flags; } const att = await Attendance.findOneAndUpdate({ user: userId, date }, { user: userId, date, status, checkIn: checkIn||null, checkOut: checkOut||null, totalHours, flags, sessionActive: false, loginStatus: 'offline', sessionEndedAt: checkOut || new Date(), shiftSource: settings.source, shiftId: settings.shiftId, shiftSnapshot: snapshotFromSettings(settings), adminOverride: true, adminNote: note||'', overriddenBy: req.user.id }, { upsert: true, new: true }); await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
 exports.requestCorrection  = async (req, res) => { try { const { date, reason, requestedCheckIn, requestedCheckOut } = req.body; if (!date || !reason) return err(res, 'date and reason required', 400); const att = await Attendance.findOne({ user: req.user.id, date }); if (!att) return err(res, 'No record found', 404); att.correctionRequest = { status: 'pending', reason, requestedCheckIn: requestedCheckIn||att.checkIn, requestedCheckOut: requestedCheckOut||att.checkOut, requestedAt: new Date() }; await att.save(); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
 exports.reviewCorrection   = async (req, res) => { try { const { action, adminNote } = req.body; if (!['approved','rejected'].includes(action)) return err(res, 'action must be approved or rejected', 400); const att = await Attendance.findById(req.params.id).populate('user','name _id'); if (!att) return err(res, 'Not found', 404); att.correctionRequest.status = action; att.correctionRequest.reviewedBy = req.user.id; att.correctionRequest.reviewedAt = new Date(); att.correctionRequest.adminNote = adminNote||''; if (action === 'approved') { const s = await getSessionSettings(); const ci = att.correctionRequest.requestedCheckIn; const co = att.correctionRequest.requestedCheckOut; att.checkIn = ci; att.checkOut = co; if (ci && co) { const cls = classifyCheckIn(ci, s); const r = computeStatus(ci, co, s, { status: cls.status || 'present', flags: cls.flags || [], isLate: !!cls.isLate, isEarly: !!cls.isEarly }); att.flags = r.flags; att.status = r.status; att.totalHours = r.totalHours; att.isLate = !!cls.isLate; att.isEarly = !!cls.isEarly; att.lateMinutes = cls.lateMinutes || 0; att.earlyMinutes = cls.earlyMinutes || 0; } att.sessionActive = false; } await att.save(); await Notification.create({ user: att.user._id, title: `Correction ${action}`, message: `Your correction for ${att.date} was ${action}.`, type: action === 'approved' ? 'success' : 'error' }); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
 exports.getPendingCorrections = async (req, res) => { try { const recs = await Attendance.find({ 'correctionRequest.status': 'pending' }).populate('user','name department').sort({ 'correctionRequest.requestedAt': -1 }); ok(res, { success: true, corrections: recs }); } catch(e) { err(res, e.message); } };
 exports.autoMarkAbsent     = async (req, res) => { try { const today = new Date().toISOString().split('T')[0]; const allUsers = await User.find({ isActive: true }).select('_id'); const todayRecs = await Attendance.find({ date: today }).select('user'); const checkedIn = new Set(todayRecs.map(r => r.user.toString())); const toMark = allUsers.filter(u => !checkedIn.has(u._id.toString())); const created = []; for (const u of toMark) { const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, autoMarked: true }); created.push(att); await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent for ${today}.`, type: 'error' }); } await logAudit(req.user?.id||'system', 'AUTO_ABSENT', today, { count: created.length }, req.ip); ok(res, { success: true, count: created.length }); } catch(e) { err(res, e.message); } };
 exports.autoEndSessions    = async (req, res) => {
   try {
-    const today    = new Date().toISOString().split('T')[0];
-    const settings = await getSessionSettings();
-    const now      = new Date();
-    const windows  = buildShiftWindows(now, settings);
-    // Only auto-end if we're past the auto-end threshold
-    if (now < windows.autoEnd && !req.body?.force) {
-      return ok(res, { success: true, count: 0, skipped: true, reason: 'before_auto_end', nextRunAt: windows.autoEnd });
-    }
+    const today = new Date().toISOString().split('T')[0];
+    const now   = new Date();
     const active = await Attendance.find({ date: today, sessionActive: true });
     let count = 0;
+    let skipped = 0;
+
     for (const rec of active) {
+      const settings = settingsFromAttendance(rec) || await getSessionSettings(rec.user);
+      const windows  = buildShiftWindows(rec.checkIn || now, settings);
+      if (now < windows.autoEnd && !req.body?.force) { skipped++; continue; }
+
       const closeAt = windows.autoEnd;
       const checkInClass = { status: rec.status, flags: rec.flags || [], isLate: rec.isLate, isEarly: rec.isEarly };
       const { flags, status, totalHours } = computeStatus(rec.checkIn, closeAt, settings, checkInClass);
       rec.checkOut = closeAt;
       rec.totalHours = totalHours;
       rec.sessionActive = false;
+      rec.loginStatus = 'offline';
+      rec.sessionEndedAt = closeAt;
       rec.status = status;
       rec.autoClosed = true;
       rec.flags = [...new Set([...(rec.flags||[]), ...flags, 'auto_ended'])];
@@ -1119,8 +1255,8 @@ exports.autoEndSessions    = async (req, res) => {
       await Notification.create({ user: rec.user, title: 'Session Auto-Ended', message: `Session auto-closed at ${fmtTime(closeAt)}. Total: ${totalHours}h · ${status}`, type: 'warning' });
       count++;
     }
-    await logAudit(req.user?.id||'system', 'AUTO_END_SESSIONS', today, { count }, req.ip);
-    ok(res, { success: true, count, ranAt: now });
+    await logAudit(req.user?.id||'system', 'AUTO_END_SESSIONS', today, { count, skipped }, req.ip);
+    ok(res, { success: true, count, skipped, ranAt: now });
   } catch(e) { err(res, e.message); }
 };
 

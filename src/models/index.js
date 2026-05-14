@@ -37,6 +37,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['super_admin', 'admin', 'employee'], default: 'employee' },
   jobTitle: { type: String, default: '' },
   department: { type: String, default: '' },
+  team: { type: String, default: '' },
   phone: { type: String, default: '' },
   avatar: { type: String, default: '' },
   salary: { type: Number, default: 0 },
@@ -84,6 +85,27 @@ const attendanceSchema = new mongoose.Schema({
   },
   ipAddress: { type: String },
   note: { type: String },
+
+  // Snapshot prevents old attendance from changing when shift settings change later.
+  shiftSource: { type: String, enum: ['employee', 'legacy_assigned_user', 'team', 'department', 'company', 'company_legacy'], default: 'company_legacy' },
+  shiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift' },
+  shiftSnapshot: {
+    name: { type: String, default: '' },
+    startTime: { type: String, default: '' },
+    endTime: { type: String, default: '' },
+    gracePeriodMinutes: { type: Number, default: 15 },
+    earlyWindowMinutes: { type: Number, default: 30 },
+    halfDayCutoffMinutes: { type: Number, default: 105 },
+    absentCutoffMinutes: { type: Number, default: 165 },
+    minWorkingHours: { type: Number, default: 4 },
+    halfDayHours: { type: Number, default: 2 },
+    autoEndBufferMinutes: { type: Number, default: 0 },
+  },
+
+  loginStatus: { type: String, enum: ['online', 'offline'], default: 'offline' },
+  sessionStartedAt: { type: Date },
+  sessionEndedAt: { type: Date },
+  forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
@@ -185,12 +207,34 @@ const departmentSchema = new mongoose.Schema({
 
 const shiftSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  startTime: { type: String, required: true },
-  endTime: { type: String, required: true },
+  startTime: { type: String, required: true }, // HH:mm
+  endTime: { type: String, required: true },   // HH:mm
   days: [{ type: String }],
+
+  // Backward-compatible direct user assignment. Kept so old UI/data does not break.
   assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
+  // New 4-tier assignment engine. Priority is employee > team > department > company.
+  scope: { type: String, enum: ['company', 'department', 'team', 'employee'], default: 'employee' },
+  department: { type: String, default: '' },
+  team: { type: String, default: '' },
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+
+  gracePeriodMinutes: { type: Number, default: 15 },
+  earlyWindowMinutes: { type: Number, default: 30 },
+  halfDayCutoffMinutes: { type: Number, default: 105 }, // 9:00 + 15 grace + 105 = 11:00
+  absentCutoffMinutes: { type: Number, default: 165 },  // 9:00 + 15 grace + 165 = 12:00
+  minWorkingHours: { type: Number, default: 4 },
+  halfDayHours: { type: Number, default: 2 },
+  autoEndBufferMinutes: { type: Number, default: 0 },
+
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
+
+shiftSchema.index({ scope: 1, isActive: 1 });
+shiftSchema.index({ employee: 1, isActive: 1 });
+shiftSchema.index({ department: 1, isActive: 1 });
+shiftSchema.index({ team: 1, isActive: 1 });
 
 const taskSchema = new mongoose.Schema({
   title: { type: String, required: true },
