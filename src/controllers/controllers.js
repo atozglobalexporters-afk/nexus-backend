@@ -959,6 +959,10 @@ function buildCompanyLegacySettings(company) {
   };
 }
 
+function istDayKeys(date = new Date()) { const d = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); const full = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][d.getDay()]; const short = full.slice(0,3); return [full, short, full[0].toUpperCase()+full.slice(1), short[0].toUpperCase()+short.slice(1)]; }
+
+function shiftDayMatchQuery(date = new Date()) { const keys = istDayKeys(date); return { $or: [{ days: { $exists: false } }, { days: { $size: 0 } }, { days: { $in: keys } }] }; }
+
 function settingsFromShift(shift, source) {
   const st = parseHHMM(shift.startTime, 9, 0);
   const en = parseHHMM(shift.endTime, 18, 0);
@@ -1031,23 +1035,23 @@ async function getSessionSettings(userId = null) {
   if (!user) return companySettings;
 
   // Priority: individual > legacy assigned user > team > department > company shift > company legacy fields.
-  const employeeShift = await Shift.findOne({ isActive: true, scope: 'employee', employee: userId }).sort({ updatedAt: -1 });
+  const employeeShift = await Shift.findOne({ isActive: true, scope: 'employee', employee: userId, ...shiftDayMatchQuery() }).sort({ updatedAt: -1 });
   if (employeeShift) return settingsFromShift(employeeShift, 'employee');
 
-  const legacyAssigned = await Shift.findOne({ isActive: true, assignedTo: userId }).sort({ updatedAt: -1 });
+  const legacyAssigned = await Shift.findOne({ isActive: true, assignedTo: userId, ...shiftDayMatchQuery() }).sort({ updatedAt: -1 });
   if (legacyAssigned) return settingsFromShift(legacyAssigned, 'legacy_assigned_user');
 
   if (user.team) {
-    const teamShift = await Shift.findOne({ isActive: true, scope: 'team', team: user.team }).sort({ updatedAt: -1 });
+    const teamShift = await Shift.findOne({ isActive: true, scope: 'team', team: user.team, ...shiftDayMatchQuery() }).sort({ updatedAt: -1 });
     if (teamShift) return settingsFromShift(teamShift, 'team');
   }
 
   if (user.department) {
-    const departmentShift = await Shift.findOne({ isActive: true, scope: 'department', department: user.department }).sort({ updatedAt: -1 });
+    const departmentShift = await Shift.findOne({ isActive: true, scope: 'department', department: user.department, ...shiftDayMatchQuery() }).sort({ updatedAt: -1 });
     if (departmentShift) return settingsFromShift(departmentShift, 'department');
   }
 
-  const companyShift = await Shift.findOne({ isActive: true, scope: { $in: ['company', 'all', 'all_employees'] } }).sort({ updatedAt: -1 });
+  const companyShift = await Shift.findOne({ isActive: true, scope: { $in: ['company', 'all', 'all_employees'] }, ...shiftDayMatchQuery() }).sort({ updatedAt: -1 });
   if (companyShift) return settingsFromShift(companyShift, 'company');
 
   return companySettings;
@@ -1744,4 +1748,6 @@ exports.deleteQuote = async (req, res) => {
     ok(res, { success: true });
   } catch (e) { err(res, e.message); }
 };
+
+
 
