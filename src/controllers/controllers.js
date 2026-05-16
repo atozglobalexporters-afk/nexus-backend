@@ -105,7 +105,17 @@ exports.checkOut = async (req, res) => {
     if (rec.checkOut) return err(res, 'Already checked out', 400);
     const now = new Date();
     rec.checkOut = now;
-    rec.totalHours = parseFloat(((now - rec.checkIn) / 3600000).toFixed(2));
+    if (!rec.checkIn || isNaN(new Date(rec.checkIn).getTime())) {
+      rec.totalHours = 0;
+    } else {
+      rec.totalHours = parseFloat(
+        ((Date.now() - new Date(rec.checkIn).getTime()) / 3600000).toFixed(2)
+      );
+
+      if (rec.totalHours < 0 || rec.totalHours > 24) {
+        rec.totalHours = 0;
+      }
+    }
     await rec.save();
     ok(res, { attendance: rec });
   } catch (e) { err(res, e.message); }
@@ -1201,7 +1211,7 @@ exports.checkOutFull = async (req, res) => {
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return res.status(400).json({ success: false, message: 'No check-in found.' });
     if (!rec.sessionActive && rec.checkOut) return res.status(400).json({ success: false, message: 'Session already ended.', attendance: rec });
-    const settings = settingsFromAttendance(rec) || await getSessionSettings(req.user.id);
+    const settings = await getSessionSettings(req.user.id);
     const now = new Date();
     // Rebuild the check-in classification from the stored fields so downgrade logic respects original status
     const checkInClass = {
@@ -1230,7 +1240,7 @@ exports.getTodayStatus = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
-    const settings = await getSessionSettings(req.user.id);
+    const settings = rec ? (settingsFromAttendance(rec) || await getSessionSettings(req.user.id)) : await getSessionSettings(req.user.id);
     const now = new Date();
     const windows = buildShiftWindows(now, settings);
     let liveStatus = 'not_started', liveHours = 0;
@@ -1239,7 +1249,17 @@ exports.getTodayStatus = async (req, res) => {
     if (rec) {
       if (rec.sessionActive && rec.checkIn) {
         liveStatus = 'working';
-        liveHours = parseFloat(((now - new Date(rec.checkIn)) / 3600000).toFixed(2));
+        if (!rec.checkIn || isNaN(new Date(rec.checkIn).getTime())) {
+          liveHours = 0;
+        } else {
+          liveHours = parseFloat(
+            ((Date.now() - new Date(rec.checkIn).getTime()) / 3600000).toFixed(2)
+          );
+
+          if (liveHours < 0 || liveHours > 24) {
+            liveHours = 0;
+          }
+        }
       } else if (rec.checkOut) {
         liveStatus = 'completed';
         liveHours = rec.totalHours;
@@ -1280,7 +1300,7 @@ exports.autoEndSessions = async (req, res) => {
     let skipped = 0;
 
     for (const rec of active) {
-      const settings = settingsFromAttendance(rec) || await getSessionSettings(rec.user);
+      const settings = await getSessionSettings(rec.user);
       const windows = buildShiftWindows(rec.checkIn || now, settings);
       if (now < windows.autoEnd && !req.body?.force) { skipped++; continue; }
 
