@@ -1166,7 +1166,7 @@ exports.checkIn = async (req, res) => {
       }
       // existing record with no checkIn (e.g. auto-marked absent) — allow new check-in to overwrite
     }
-    const settings = await getSessionSettings(req.user.id);
+    const settings = await getSessionSettings(req.user);
     const now = new Date();
     const cls = classifyCheckIn(now, settings);
     if (!cls.allowed) {
