@@ -8,11 +8,11 @@ const {
   Payroll, Expense, Announcement, Leave, Organization,
 } = require('../models');
 
-const ok  = (res, data, status = 200) => res.status(status).json(data);
+const ok = (res, data, status = 200) => res.status(status).json(data);
 const err = (res, msg, status = 500) => res.status(status).json({ message: msg });
 
 const logAudit = async (userId, action, target, details, ip) => {
-  try { await AuditLog.create({ user: userId, action, target, details, ip }); } catch {}
+  try { await AuditLog.create({ user: userId, action, target, details, ip }); } catch { }
 };
 
 // ── Server Time ───────────────────────────────────────────────
@@ -28,7 +28,7 @@ exports.getDashboard = async (req, res) => {
       Salary.countDocuments({ status: 'pending' }),
       Order.countDocuments(),
     ]);
-    const present = todayAtt.filter(a => ['present','late'].includes(a.status)).length;
+    const present = todayAtt.filter(a => ['present', 'late'].includes(a.status)).length;
     ok(res, { totalEmployees: users, presentToday: present, pendingSalaries: pendingSal, totalOrders: orders });
   } catch (e) { err(res, e.message); }
 };
@@ -51,7 +51,7 @@ exports.getUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const isSelf = req.params.id === req.user.id;
     if (!isAdm && !isSelf) return err(res, 'Forbidden', 403);
 
@@ -84,15 +84,15 @@ exports.deleteUser = async (req, res) => {
 // ── Attendance ────────────────────────────────────────────────
 exports.getAttendance = async (req, res) => {
   try {
-    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const filter = isAdm ? {} : { user: req.user.id };
     const { month, year } = req.query;
     if (month && year) {
-      const start = `${year}-${String(month).padStart(2,'0')}-01`;
-      const end   = `${year}-${String(month).padStart(2,'0')}-31`;
+      const start = `${year}-${String(month).padStart(2, '0')}-01`;
+      const end = `${year}-${String(month).padStart(2, '0')}-31`;
       filter.date = { $gte: start, $lte: end };
     }
-    const records = await Attendance.find(filter).populate('user','name department jobTitle').sort({ date: -1 }).limit(500);
+    const records = await Attendance.find(filter).populate('user', 'name department jobTitle').sort({ date: -1 }).limit(500);
     ok(res, { attendance: records });
   } catch (e) { err(res, e.message); }
 };
@@ -100,11 +100,11 @@ exports.getAttendance = async (req, res) => {
 exports.checkOut = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const rec   = await Attendance.findOne({ user: req.user.id, date: today });
+    const rec = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return err(res, 'No check-in found for today', 400);
     if (rec.checkOut) return err(res, 'Already checked out', 400);
-    const now      = new Date();
-    rec.checkOut   = now;
+    const now = new Date();
+    rec.checkOut = now;
     rec.totalHours = parseFloat(((now - rec.checkIn) / 3600000).toFixed(2));
     await rec.save();
     ok(res, { attendance: rec });
@@ -113,7 +113,7 @@ exports.checkOut = async (req, res) => {
 
 exports.getAttendanceSummary = async (req, res) => {
   try {
-    const userId  = req.user.role === 'employee' ? req.user.id : (req.query.userId || req.user.id);
+    const userId = req.user.role === 'employee' ? req.user.id : (req.query.userId || req.user.id);
     const records = await Attendance.find({ user: userId });
     const summary = { present: 0, late: 0, absent: 0, halfDay: 0, totalHours: 0 };
     records.forEach(r => {
@@ -129,12 +129,12 @@ exports.getMonthlyAttendance = async (req, res) => {
   try {
     const { month, year } = req.query;
     const m = month || new Date().getMonth() + 1;
-    const y = year  || new Date().getFullYear();
-    const start = `${y}-${String(m).padStart(2,'0')}-01`;
-    const end   = `${y}-${String(m).padStart(2,'0')}-31`;
+    const y = year || new Date().getFullYear();
+    const start = `${y}-${String(m).padStart(2, '0')}-01`;
+    const end = `${y}-${String(m).padStart(2, '0')}-31`;
     const filter = { date: { $gte: start, $lte: end } };
     if (req.user.role === 'employee') filter.user = req.user.id;
-    const records = await Attendance.find(filter).populate('user','name department');
+    const records = await Attendance.find(filter).populate('user', 'name department');
     ok(res, { attendance: records });
   } catch (e) { err(res, e.message); }
 };
@@ -166,9 +166,9 @@ exports.deleteHoliday = async (req, res) => {
 // ── Work Logs ─────────────────────────────────────────────────
 exports.getWorkLogs = async (req, res) => {
   try {
-    const isAdm  = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const filter = isAdm ? {} : { user: req.user.id };
-    const logs   = await WorkLog.find(filter).populate('user','name department').sort({ createdAt: -1 });
+    const logs = await WorkLog.find(filter).populate('user', 'name department').sort({ createdAt: -1 });
     ok(res, { worklogs: logs });
   } catch (e) { err(res, e.message); }
 };
@@ -189,9 +189,9 @@ exports.updateWorkLog = async (req, res) => {
   try {
     const body = { ...req.body };
     // Keep status <-> approved in sync (frontend sends status, legacy code reads approved)
-    if (body.status === 'approved') { body.approved = true;  body.approvedBy = req.user.id; }
+    if (body.status === 'approved') { body.approved = true; body.approvedBy = req.user.id; }
     if (body.status === 'rejected') { body.approved = false; body.approvedBy = req.user.id; }
-    if (body.status === 'pending')  { body.approved = false; body.approvedBy = undefined; }
+    if (body.status === 'pending') { body.approved = false; body.approvedBy = undefined; }
     const log = await WorkLog.findByIdAndUpdate(req.params.id, body, { new: true });
     if (!log) return err(res, 'Not found', 404);
     await logAudit(req.user.id, 'UPDATE_WORKLOG', req.params.id, req.body, req.ip);
@@ -216,9 +216,9 @@ exports.downloadWorkLogFile = async (req, res) => {
 // ── Salary ────────────────────────────────────────────────────
 exports.getSalaries = async (req, res) => {
   try {
-    const isAdm    = ['admin','super_admin'].includes(req.user.role);
-    const filter   = isAdm ? {} : { user: req.user.id };
-    const salaries = await Salary.find(filter).populate('user','name department jobTitle').sort({ createdAt: -1 });
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
+    const filter = isAdm ? {} : { user: req.user.id };
+    const salaries = await Salary.find(filter).populate('user', 'name department jobTitle').sort({ createdAt: -1 });
     ok(res, { salaries });
   } catch (e) { err(res, e.message); }
 };
@@ -226,7 +226,7 @@ exports.getSalaries = async (req, res) => {
 exports.createSalary = async (req, res) => {
   try {
     const salary = await Salary.create(req.body);
-    await salary.populate('user','name');
+    await salary.populate('user', 'name');
     await logAudit(req.user.id, 'CREATE_SALARY', salary._id, req.body, req.ip);
     ok(res, { salary }, 201);
   } catch (e) { err(res, e.message); }
@@ -293,7 +293,7 @@ exports.deleteBuyer = async (req, res) => {
 // ── Orders ────────────────────────────────────────────────────
 exports.getOrders = async (req, res) => {
   try {
-    const orders = await Order.find({}).populate('buyer','name company country').sort({ createdAt: -1 });
+    const orders = await Order.find({}).populate('buyer', 'name company country').sort({ createdAt: -1 });
     ok(res, { orders });
   } catch (e) { err(res, e.message); }
 };
@@ -301,7 +301,7 @@ exports.getOrders = async (req, res) => {
 exports.createOrder = async (req, res) => {
   try {
     const count = await Order.countDocuments();
-    const body  = { ...req.body, orderNumber: req.body.orderNumber || `ORD-${String(count+1).padStart(4,'0')}` };
+    const body = { ...req.body, orderNumber: req.body.orderNumber || `ORD-${String(count + 1).padStart(4, '0')}` };
     const order = await Order.create(body);
     await logAudit(req.user.id, 'CREATE_ORDER', order._id, body, req.ip);
     ok(res, { order }, 201);
@@ -318,7 +318,7 @@ exports.updateOrder = async (req, res) => {
 // ── Audit ─────────────────────────────────────────────────────
 exports.getAuditLogs = async (req, res) => {
   try {
-    const logs = await AuditLog.find({}).populate('user','name').sort({ createdAt: -1 }).limit(200);
+    const logs = await AuditLog.find({}).populate('user', 'name').sort({ createdAt: -1 }).limit(200);
     ok(res, { logs });
   } catch (e) { err(res, e.message); }
 };
@@ -341,8 +341,8 @@ exports.markNotificationsRead = async (req, res) => {
 // ── Departments ───────────────────────────────────────────────
 exports.getDepartments = async (req, res) => {
   try {
-    const departments = await Department.find({}).populate('head','name jobTitle').sort({ name: 1 });
-    const users  = await User.find({ isActive: true }).select('department');
+    const departments = await Department.find({}).populate('head', 'name jobTitle').sort({ name: 1 });
+    const users = await User.find({ isActive: true }).select('department');
     const result = departments.map(d => ({
       ...d.toObject(),
       employeeCount: users.filter(u => u.department === d.name).length,
@@ -379,8 +379,8 @@ exports.deleteDepartment = async (req, res) => {
 exports.getShifts = async (req, res) => {
   try {
     const shifts = await Shift.find({})
-      .populate('assignedTo','name department team')
-      .populate('employee','name department team')
+      .populate('assignedTo', 'name department team')
+      .populate('employee', 'name department team')
       .sort({ updatedAt: -1 });
     ok(res, { shifts });
   } catch (e) { err(res, e.message); }
@@ -449,12 +449,12 @@ exports.deleteShift = async (req, res) => {
 // ── Tasks ─────────────────────────────────────────────────────
 exports.getTasks = async (req, res) => {
   try {
-    const isAdm  = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const filter = isAdm ? {} : { assignedTo: req.user.id };
-    const tasks  = await Task.find(filter)
-      .populate('assignedTo','name department')
-      .populate('assignedBy','name')
-      .populate('project','name')
+    const tasks = await Task.find(filter)
+      .populate('assignedTo', 'name department')
+      .populate('assignedBy', 'name')
+      .populate('project', 'name')
       .sort({ createdAt: -1 });
     ok(res, { tasks });
   } catch (e) { err(res, e.message); }
@@ -463,7 +463,7 @@ exports.getTasks = async (req, res) => {
 exports.createTask = async (req, res) => {
   try {
     const task = await Task.create({ ...req.body, assignedBy: req.user.id });
-    await task.populate('assignedTo','name');
+    await task.populate('assignedTo', 'name');
     await logAudit(req.user.id, 'CREATE_TASK', task._id, req.body, req.ip);
     await Notification.create({
       user: task.assignedTo._id,
@@ -478,8 +478,8 @@ exports.createTask = async (req, res) => {
 exports.updateTask = async (req, res) => {
   try {
     const task = await Task.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      .populate('assignedTo','name')
-      .populate('assignedBy','name');
+      .populate('assignedTo', 'name')
+      .populate('assignedBy', 'name');
     if (!task) return err(res, 'Not found', 404);
     await logAudit(req.user.id, 'UPDATE_TASK', req.params.id, req.body, req.ip);
     ok(res, { task });
@@ -496,11 +496,11 @@ exports.deleteTask = async (req, res) => {
 // ── Projects ──────────────────────────────────────────────────
 exports.getProjects = async (req, res) => {
   try {
-    const isAdm   = ['admin','super_admin'].includes(req.user.role);
-    const filter  = isAdm ? {} : { members: req.user.id };
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
+    const filter = isAdm ? {} : { members: req.user.id };
     const projects = await Project.find(filter)
-      .populate('members','name jobTitle')
-      .populate('manager','name')
+      .populate('members', 'name jobTitle')
+      .populate('manager', 'name')
       .sort({ createdAt: -1 });
     ok(res, { projects });
   } catch (e) { err(res, e.message); }
@@ -532,11 +532,11 @@ exports.deleteProject = async (req, res) => {
 // ── Timesheets ────────────────────────────────────────────────
 exports.getTimesheets = async (req, res) => {
   try {
-    const isAdm  = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const filter = isAdm ? {} : { user: req.user.id };
     const sheets = await Timesheet.find(filter)
-      .populate('user','name department')
-      .populate('approvedBy','name')
+      .populate('user', 'name department')
+      .populate('approvedBy', 'name')
       .sort({ createdAt: -1 });
     ok(res, { timesheets: sheets });
   } catch (e) { err(res, e.message); }
@@ -544,9 +544,9 @@ exports.getTimesheets = async (req, res) => {
 
 exports.createTimesheet = async (req, res) => {
   try {
-    const entries    = req.body.entries || [];
+    const entries = req.body.entries || [];
     const totalHours = entries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
-    const sheet      = await Timesheet.create({ ...req.body, user: req.user.id, totalHours });
+    const sheet = await Timesheet.create({ ...req.body, user: req.user.id, totalHours });
     ok(res, { timesheet: sheet }, 201);
   } catch (e) { err(res, e.message); }
 };
@@ -576,10 +576,10 @@ exports.getPayroll = async (req, res) => {
     const { month, year } = req.query;
     const filter = {};
     if (month) filter.month = Number(month);
-    if (year)  filter.year  = Number(year);
+    if (year) filter.year = Number(year);
     const payroll = await Payroll.find(filter)
-      .populate('user','name department jobTitle')
-      .populate('generatedBy','name')
+      .populate('user', 'name department jobTitle')
+      .populate('generatedBy', 'name')
       .sort({ createdAt: -1 });
     ok(res, { payroll });
   } catch (e) { err(res, e.message); }
@@ -587,15 +587,15 @@ exports.getPayroll = async (req, res) => {
 
 exports.createPayroll = async (req, res) => {
   try {
-    const net = (Number(req.body.basicSalary) + Number(req.body.allowances||0)) - (Number(req.body.deductions||0) + Number(req.body.tax||0));
+    const net = (Number(req.body.basicSalary) + Number(req.body.allowances || 0)) - (Number(req.body.deductions || 0) + Number(req.body.tax || 0));
     const rec = await Payroll.create({
       ...req.body,
       month: Number(req.body.month),
-      year:  Number(req.body.year),
+      year: Number(req.body.year),
       netSalary: net,
       generatedBy: req.user.id,
     });
-    await rec.populate('user','name');
+    await rec.populate('user', 'name');
     await logAudit(req.user.id, 'CREATE_PAYROLL', rec._id, req.body, req.ip);
     ok(res, { payroll: rec }, 201);
   } catch (e) { err(res, e.message); }
@@ -604,27 +604,27 @@ exports.createPayroll = async (req, res) => {
 exports.generatePayroll = async (req, res) => {
   try {
     const month = Number(req.body.month);
-    const year  = Number(req.body.year);
+    const year = Number(req.body.year);
     if (!month || month < 1 || month > 12) return err(res, 'Valid month (1-12) required', 400);
-    if (!year  || year  < 2000 || year > 2100) return err(res, 'Valid year required', 400);
+    if (!year || year < 2000 || year > 2100) return err(res, 'Valid year required', 400);
 
-    const users   = await User.find({ isActive: true });
+    const users = await User.find({ isActive: true });
     const created = [];
     const skipped = [];
 
     // Build date range for attendance lookup (date field is stored as 'YYYY-MM-DD' string)
-    const mm    = String(month).padStart(2, '0');
+    const mm = String(month).padStart(2, '0');
     const start = `${year}-${mm}-01`;
-    const end   = `${year}-${mm}-31`;
+    const end = `${year}-${mm}-31`;
 
     for (const u of users) {
       const existing = await Payroll.findOne({ user: u._id, month, year });
       if (existing) { skipped.push(u._id); continue; }
 
-      const attRecs    = await Attendance.find({ user: u._id, date: { $gte: start, $lte: end } });
-      const daysWorked = attRecs.filter(a => ['present','late','half_day','early'].includes(a.status)).length;
+      const attRecs = await Attendance.find({ user: u._id, date: { $gte: start, $lte: end } });
+      const daysWorked = attRecs.filter(a => ['present', 'late', 'half_day', 'early'].includes(a.status)).length;
       const daysAbsent = attRecs.filter(a => a.status === 'absent').length;
-      const basic      = Number(u.salary) || 0;
+      const basic = Number(u.salary) || 0;
 
       const rec = await Payroll.create({
         user: u._id,
@@ -657,7 +657,7 @@ exports.generatePayroll = async (req, res) => {
 exports.updatePayroll = async (req, res) => {
   try {
     if (req.body.status === 'paid') req.body.paidOn = new Date();
-    const rec = await Payroll.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate('user','name');
+    const rec = await Payroll.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate('user', 'name');
     if (!rec) return err(res, 'Not found', 404);
     ok(res, { payroll: rec });
   } catch (e) { err(res, e.message); }
@@ -673,11 +673,11 @@ exports.deletePayroll = async (req, res) => {
 // ── Expenses ──────────────────────────────────────────────────
 exports.getExpenses = async (req, res) => {
   try {
-    const isAdm    = ['admin','super_admin'].includes(req.user.role);
-    const filter   = isAdm ? {} : { user: req.user.id };
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
+    const filter = isAdm ? {} : { user: req.user.id };
     const expenses = await Expense.find(filter)
-      .populate('user','name department')
-      .populate('approvedBy','name')
+      .populate('user', 'name department')
+      .populate('approvedBy', 'name')
       .sort({ createdAt: -1 });
     ok(res, { expenses });
   } catch (e) { err(res, e.message); }
@@ -718,7 +718,7 @@ exports.getAnnouncements = async (req, res) => {
       $or: [{ targetRole: 'all' }, { targetRole: req.user.role }],
     };
     const announcements = await Announcement.find(filter)
-      .populate('postedBy','name jobTitle')
+      .populate('postedBy', 'name jobTitle')
       .sort({ createdAt: -1 });
     ok(res, { announcements });
   } catch (e) { err(res, e.message); }
@@ -727,7 +727,7 @@ exports.getAnnouncements = async (req, res) => {
 exports.createAnnouncement = async (req, res) => {
   try {
     const ann = await Announcement.create({ ...req.body, postedBy: req.user.id });
-    await ann.populate('postedBy','name');
+    await ann.populate('postedBy', 'name');
     await logAudit(req.user.id, 'CREATE_ANNOUNCEMENT', ann._id, req.body, req.ip);
     ok(res, { announcement: ann }, 201);
   } catch (e) { err(res, e.message); }
@@ -751,11 +751,11 @@ exports.deleteAnnouncement = async (req, res) => {
 // ── Leaves ────────────────────────────────────────────────────
 exports.getLeaves = async (req, res) => {
   try {
-    const isAdm  = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const filter = isAdm ? {} : { user: req.user.id };
     const leaves = await Leave.find(filter)
-      .populate('user','name department jobTitle')
-      .populate('reviewedBy','name')
+      .populate('user', 'name department jobTitle')
+      .populate('reviewedBy', 'name')
       .sort({ createdAt: -1 });
     ok(res, { leaves });
   } catch (e) { err(res, e.message); }
@@ -763,11 +763,11 @@ exports.getLeaves = async (req, res) => {
 
 exports.createLeave = async (req, res) => {
   try {
-    const from  = new Date(req.body.from);
-    const to    = new Date(req.body.to);
-    const days  = Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
+    const from = new Date(req.body.from);
+    const to = new Date(req.body.to);
+    const days = Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
     const leave = await Leave.create({ ...req.body, user: req.user.id, days });
-    await leave.populate('user','name');
+    await leave.populate('user', 'name');
     await logAudit(req.user.id, 'CREATE_LEAVE', leave._id, req.body, req.ip);
     ok(res, { leave }, 201);
   } catch (e) { err(res, e.message); }
@@ -775,13 +775,13 @@ exports.createLeave = async (req, res) => {
 
 exports.updateLeave = async (req, res) => {
   try {
-    if (req.body.status && ['approved','rejected'].includes(req.body.status)) {
+    if (req.body.status && ['approved', 'rejected'].includes(req.body.status)) {
       req.body.reviewedBy = req.user.id;
       req.body.reviewedOn = new Date();
     }
     const leave = await Leave.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      .populate('user','name')
-      .populate('reviewedBy','name');
+      .populate('user', 'name')
+      .populate('reviewedBy', 'name');
     if (!leave) return err(res, 'Not found', 404);
     if (req.body.status) {
       await Notification.create({
@@ -834,7 +834,7 @@ exports.getRoles = async (req, res) => {
 exports.updateUserRole = async (req, res) => {
   try {
     const { role } = req.body;
-    if (!['admin','employee','super_admin'].includes(role)) return err(res, 'Invalid role', 400);
+    if (!['admin', 'employee', 'super_admin'].includes(role)) return err(res, 'Invalid role', 400);
     const user = await User.findByIdAndUpdate(req.params.userId, { role }, { new: true }).select('-password');
     if (!user) return err(res, 'User not found', 404);
     await logAudit(req.user.id, 'UPDATE_ROLE', req.params.userId, { role }, req.ip);
@@ -879,15 +879,15 @@ exports.getAttendanceReport = async (req, res) => {
   try {
     const { month, year } = req.query;
     const m = month || new Date().getMonth() + 1;
-    const y = year  || new Date().getFullYear();
-    const start = `${y}-${String(m).padStart(2,'0')}-01`;
-    const end   = `${y}-${String(m).padStart(2,'0')}-31`;
-    const records = await Attendance.find({ date: { $gte: start, $lte: end } }).populate('user','name department');
+    const y = year || new Date().getFullYear();
+    const start = `${y}-${String(m).padStart(2, '0')}-01`;
+    const end = `${y}-${String(m).padStart(2, '0')}-31`;
+    const records = await Attendance.find({ date: { $gte: start, $lte: end } }).populate('user', 'name department');
     const summary = {
-      present:  records.filter(r => r.status === 'present').length,
-      late:     records.filter(r => r.status === 'late').length,
-      absent:   records.filter(r => r.status === 'absent').length,
-      halfDay:  records.filter(r => r.status === 'half-day').length,
+      present: records.filter(r => r.status === 'present').length,
+      late: records.filter(r => r.status === 'late').length,
+      absent: records.filter(r => r.status === 'absent').length,
+      halfDay: records.filter(r => r.status === 'half-day').length,
       totalHours: records.reduce((s, r) => s + (r.totalHours || 0), 0),
     };
     ok(res, { records, summary });
@@ -897,24 +897,24 @@ exports.getAttendanceReport = async (req, res) => {
 exports.getPayrollReport = async (req, res) => {
   try {
     const { month } = req.query;
-    const filter    = month ? { month } : {};
-    const records   = await Payroll.find(filter).populate('user','name department');
-    const total     = records.reduce((s, r) => s + r.netSalary, 0);
-    const paid      = records.filter(r => r.status === 'paid').reduce((s, r) => s + r.netSalary, 0);
-    const pending   = records.filter(r => r.status !== 'paid').reduce((s, r) => s + r.netSalary, 0);
+    const filter = month ? { month } : {};
+    const records = await Payroll.find(filter).populate('user', 'name department');
+    const total = records.reduce((s, r) => s + r.netSalary, 0);
+    const paid = records.filter(r => r.status === 'paid').reduce((s, r) => s + r.netSalary, 0);
+    const pending = records.filter(r => r.status !== 'paid').reduce((s, r) => s + r.netSalary, 0);
     ok(res, { records, totalPayroll: total, paid, pending });
   } catch (e) { err(res, e.message); }
 };
 
 exports.getTasksReport = async (req, res) => {
   try {
-    const tasks = await Task.find({}).populate('assignedTo','name department');
+    const tasks = await Task.find({}).populate('assignedTo', 'name department');
     const summary = {
-      total:       tasks.length,
-      pending:     tasks.filter(t => t.status === 'pending').length,
-      inProgress:  tasks.filter(t => t.status === 'in_progress').length,
-      completed:   tasks.filter(t => t.status === 'completed').length,
-      cancelled:   tasks.filter(t => t.status === 'cancelled').length,
+      total: tasks.length,
+      pending: tasks.filter(t => t.status === 'pending').length,
+      inProgress: tasks.filter(t => t.status === 'in_progress').length,
+      completed: tasks.filter(t => t.status === 'completed').length,
+      cancelled: tasks.filter(t => t.status === 'cancelled').length,
       highPriority: tasks.filter(t => t.priority === 'high').length,
     };
     ok(res, { tasks, summary });
@@ -943,23 +943,23 @@ function buildCompanyLegacySettings(company) {
     source: 'company_legacy',
     shiftId: null,
     name: company?.name ? `${company.name} Default Shift` : 'Company Default Shift',
-    startHour:           company?.officeStartHour      ?? parseInt(process.env.OFFICE_START_HOUR     || '9'),
-    startMinute:         company?.officeStartMinute    ?? parseInt(process.env.OFFICE_START_MINUTE   || '0'),
-    endHour:             company?.officeEndHour        ?? parseInt(process.env.OFFICE_END_HOUR       || '18'),
-    endMinute:           company?.officeEndMinute      ?? parseInt(process.env.OFFICE_END_MINUTE     || '0'),
-    gracePeriod:         company?.gracePeriodMinutes   ?? parseInt(process.env.GRACE_PERIOD_MINUTES  || '15'),
-    earlyWindow:         company?.earlyWindowMinutes   ?? parseInt(process.env.EARLY_WINDOW_MINUTES  || '30'),
-    halfDayCutoffMins:   company?.halfDayCutoffMinutes ?? parseInt(process.env.HALFDAY_CUTOFF_MINUTES|| '105'),
-    absentCutoffMins:    company?.absentCutoffMinutes  ?? parseInt(process.env.ABSENT_CUTOFF_MINUTES || '165'),
-    minHours:            company?.minWorkingHours      ?? parseFloat(process.env.MIN_WORKING_HOURS   || '4'),
-    halfDayHours:        company?.halfDayHours         ?? parseFloat(process.env.HALF_DAY_HOURS      || '2'),
-    autoEndBufferMins:   company?.autoEndBufferMinutes ?? parseInt(process.env.AUTO_END_BUFFER_MIN   || '0'),
-    autoEndHour:         company?.autoEndHour          ?? parseInt(process.env.AUTO_END_HOUR         || '23'),
-    autoEndMinute:       company?.autoEndMinute        ?? parseInt(process.env.AUTO_END_MINUTE       || '59'),
+    startHour: company?.officeStartHour ?? parseInt(process.env.OFFICE_START_HOUR || '9'),
+    startMinute: company?.officeStartMinute ?? parseInt(process.env.OFFICE_START_MINUTE || '0'),
+    endHour: company?.officeEndHour ?? parseInt(process.env.OFFICE_END_HOUR || '18'),
+    endMinute: company?.officeEndMinute ?? parseInt(process.env.OFFICE_END_MINUTE || '0'),
+    gracePeriod: company?.gracePeriodMinutes ?? parseInt(process.env.GRACE_PERIOD_MINUTES || '15'),
+    earlyWindow: company?.earlyWindowMinutes ?? parseInt(process.env.EARLY_WINDOW_MINUTES || '30'),
+    halfDayCutoffMins: company?.halfDayCutoffMinutes ?? parseInt(process.env.HALFDAY_CUTOFF_MINUTES || '105'),
+    absentCutoffMins: company?.absentCutoffMinutes ?? parseInt(process.env.ABSENT_CUTOFF_MINUTES || '165'),
+    minHours: company?.minWorkingHours ?? parseFloat(process.env.MIN_WORKING_HOURS || '4'),
+    halfDayHours: company?.halfDayHours ?? parseFloat(process.env.HALF_DAY_HOURS || '2'),
+    autoEndBufferMins: company?.autoEndBufferMinutes ?? parseInt(process.env.AUTO_END_BUFFER_MIN || '0'),
+    autoEndHour: company?.autoEndHour ?? parseInt(process.env.AUTO_END_HOUR || '23'),
+    autoEndMinute: company?.autoEndMinute ?? parseInt(process.env.AUTO_END_MINUTE || '59'),
   };
 }
 
-function istDayKeys(date = new Date()) { const d = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); const full = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][d.getDay()]; const short = full.slice(0,3); return [full, short, full[0].toUpperCase()+full.slice(1), short[0].toUpperCase()+short.slice(1)]; }
+function istDayKeys(date = new Date()) { const d = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); const full = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][d.getDay()]; const short = full.slice(0, 3); return [full, short, full[0].toUpperCase() + full.slice(1), short[0].toUpperCase() + short.slice(1)]; }
 
 function shiftDayMatchQuery(date = new Date()) { const keys = istDayKeys(date); return { $or: [{ days: { $exists: false } }, { days: { $size: 0 } }, { days: { $in: keys } }] }; }
 
@@ -1061,13 +1061,13 @@ async function getSessionSettings(userId = null) {
 function buildShiftWindows(refDate, settings) {
   const d = new Date(refDate);
   const shiftStart = new Date(d); shiftStart.setHours(settings.startHour, settings.startMinute, 0, 0);
-  const shiftEnd   = new Date(d); shiftEnd.setHours(settings.endHour, settings.endMinute, 0, 0);
+  const shiftEnd = new Date(d); shiftEnd.setHours(settings.endHour, settings.endMinute, 0, 0);
   // if shift end <= start, it wraps overnight — push to next day
   if (shiftEnd <= shiftStart) shiftEnd.setDate(shiftEnd.getDate() + 1);
-  const graceCutoff   = new Date(shiftStart.getTime() + settings.gracePeriod * 60000);
+  const graceCutoff = new Date(shiftStart.getTime() + settings.gracePeriod * 60000);
   const halfDayCutoff = new Date(graceCutoff.getTime() + settings.halfDayCutoffMins * 60000);
-  const absentCutoff  = new Date(graceCutoff.getTime() + settings.absentCutoffMins * 60000);
-  const earlyOpen     = new Date(shiftStart.getTime() - settings.earlyWindow * 60000);
+  const absentCutoff = new Date(graceCutoff.getTime() + settings.absentCutoffMins * 60000);
+  const earlyOpen = new Date(shiftStart.getTime() - settings.earlyWindow * 60000);
   // Auto-end = shift end + buffer. If buffer is 0, auto-end exactly at shift end.
   let autoEnd;
   if (settings.autoEndBufferMins >= 0) {
@@ -1144,7 +1144,7 @@ function computeStatus(checkIn, checkOut, settings, checkInClass) {
 
 exports.checkIn = async (req, res) => {
   try {
-    const today    = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
     const existing = await Attendance.findOne({ user: req.user.id, date: today });
     if (existing) {
       // Re-login UX: if session already completed, surface the record so frontend shows "Already done today"
@@ -1157,8 +1157,8 @@ exports.checkIn = async (req, res) => {
       // existing record with no checkIn (e.g. auto-marked absent) — allow new check-in to overwrite
     }
     const settings = await getSessionSettings(req.user.id);
-    const now      = new Date();
-    const cls      = classifyCheckIn(now, settings);
+    const now = new Date();
+    const cls = classifyCheckIn(now, settings);
     if (!cls.allowed) {
       return res.status(400).json({ success: false, code: cls.reason.toUpperCase(), message: cls.message, suggestedStatus: cls.status });
     }
@@ -1198,11 +1198,11 @@ exports.checkIn = async (req, res) => {
 exports.checkOutFull = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const rec   = await Attendance.findOne({ user: req.user.id, date: today });
+    const rec = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return res.status(400).json({ success: false, message: 'No check-in found.' });
     if (!rec.sessionActive && rec.checkOut) return res.status(400).json({ success: false, message: 'Session already ended.', attendance: rec });
     const settings = settingsFromAttendance(rec) || await getSessionSettings(req.user.id);
-    const now      = new Date();
+    const now = new Date();
     // Rebuild the check-in classification from the stored fields so downgrade logic respects original status
     const checkInClass = {
       status: rec.status,
@@ -1228,14 +1228,14 @@ exports.checkOutFull = async (req, res) => {
 
 exports.getTodayStatus = async (req, res) => {
   try {
-    const today    = new Date().toISOString().split('T')[0];
-    const rec      = await Attendance.findOne({ user: req.user.id, date: today });
-    const settings = rec ? (settingsFromAttendance(rec) || await getSessionSettings(req.user.id)) : await getSessionSettings(req.user.id);
-    const now      = new Date();
-    const windows  = buildShiftWindows(now, settings);
+    const today = new Date().toISOString().split('T')[0];
+    const rec = await Attendance.findOne({ user: req.user.id, date: today });
+    const settings = await getSessionSettings(req.user.id);
+    const now = new Date();
+    const windows = buildShiftWindows(now, settings);
     let liveStatus = 'not_started', liveHours = 0;
     // Inform the client what the status WOULD BE if they checked in right now
-    const wouldBe  = classifyCheckIn(now, settings);
+    const wouldBe = classifyCheckIn(now, settings);
     if (rec) {
       if (rec.sessionActive && rec.checkIn) {
         liveStatus = 'working';
@@ -1266,22 +1266,22 @@ exports.getTodayStatus = async (req, res) => {
 };
 
 
-exports.adminOverride      = async (req, res) => { try { const { userId, date, status, checkIn, checkOut, note } = req.body; if (!userId || !date || !status) return err(res, 'userId, date and status required', 400); const settings = await getSessionSettings(userId); let totalHours = 0, flags = []; if (checkIn && checkOut) { const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status, flags: [], isLate: false, isEarly: false }); totalHours = r.totalHours; flags = r.flags; } const att = await Attendance.findOneAndUpdate({ user: userId, date }, { user: userId, date, status, checkIn: checkIn||null, checkOut: checkOut||null, totalHours, flags, sessionActive: false, loginStatus: 'offline', sessionEndedAt: checkOut || new Date(), shiftSource: settings.source, shiftId: settings.shiftId, shiftSnapshot: snapshotFromSettings(settings), adminOverride: true, adminNote: note||'', overriddenBy: req.user.id }, { upsert: true, new: true }); await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
-exports.requestCorrection  = async (req, res) => { try { const { date, reason, requestedCheckIn, requestedCheckOut } = req.body; if (!date || !reason) return err(res, 'date and reason required', 400); const att = await Attendance.findOne({ user: req.user.id, date }); if (!att) return err(res, 'No record found', 404); att.correctionRequest = { status: 'pending', reason, requestedCheckIn: requestedCheckIn||att.checkIn, requestedCheckOut: requestedCheckOut||att.checkOut, requestedAt: new Date() }; await att.save(); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
-exports.reviewCorrection   = async (req, res) => { try { const { action, adminNote } = req.body; if (!['approved','rejected'].includes(action)) return err(res, 'action must be approved or rejected', 400); const att = await Attendance.findById(req.params.id).populate('user','name _id'); if (!att) return err(res, 'Not found', 404); att.correctionRequest.status = action; att.correctionRequest.reviewedBy = req.user.id; att.correctionRequest.reviewedAt = new Date(); att.correctionRequest.adminNote = adminNote||''; if (action === 'approved') { const s = await getSessionSettings(); const ci = att.correctionRequest.requestedCheckIn; const co = att.correctionRequest.requestedCheckOut; att.checkIn = ci; att.checkOut = co; if (ci && co) { const cls = classifyCheckIn(ci, s); const r = computeStatus(ci, co, s, { status: cls.status || 'present', flags: cls.flags || [], isLate: !!cls.isLate, isEarly: !!cls.isEarly }); att.flags = r.flags; att.status = r.status; att.totalHours = r.totalHours; att.isLate = !!cls.isLate; att.isEarly = !!cls.isEarly; att.lateMinutes = cls.lateMinutes || 0; att.earlyMinutes = cls.earlyMinutes || 0; } att.sessionActive = false; } await att.save(); await Notification.create({ user: att.user._id, title: `Correction ${action}`, message: `Your correction for ${att.date} was ${action}.`, type: action === 'approved' ? 'success' : 'error' }); ok(res, { success: true, attendance: att }); } catch(e) { err(res, e.message); } };
-exports.getPendingCorrections = async (req, res) => { try { const recs = await Attendance.find({ 'correctionRequest.status': 'pending' }).populate('user','name department').sort({ 'correctionRequest.requestedAt': -1 }); ok(res, { success: true, corrections: recs }); } catch(e) { err(res, e.message); } };
-exports.autoMarkAbsent     = async (req, res) => { try { const today = new Date().toISOString().split('T')[0]; const allUsers = await User.find({ isActive: true }).select('_id'); const todayRecs = await Attendance.find({ date: today }).select('user'); const checkedIn = new Set(todayRecs.map(r => r.user.toString())); const toMark = allUsers.filter(u => !checkedIn.has(u._id.toString())); const created = []; for (const u of toMark) { const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, autoMarked: true }); created.push(att); await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent for ${today}.`, type: 'error' }); } await logAudit(req.user?.id||'system', 'AUTO_ABSENT', today, { count: created.length }, req.ip); ok(res, { success: true, count: created.length }); } catch(e) { err(res, e.message); } };
-exports.autoEndSessions    = async (req, res) => {
+exports.adminOverride = async (req, res) => { try { const { userId, date, status, checkIn, checkOut, note } = req.body; if (!userId || !date || !status) return err(res, 'userId, date and status required', 400); const settings = await getSessionSettings(userId); let totalHours = 0, flags = []; if (checkIn && checkOut) { const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status, flags: [], isLate: false, isEarly: false }); totalHours = r.totalHours; flags = r.flags; } const att = await Attendance.findOneAndUpdate({ user: userId, date }, { user: userId, date, status, checkIn: checkIn || null, checkOut: checkOut || null, totalHours, flags, sessionActive: false, loginStatus: 'offline', sessionEndedAt: checkOut || new Date(), shiftSource: settings.source, shiftId: settings.shiftId, shiftSnapshot: snapshotFromSettings(settings), adminOverride: true, adminNote: note || '', overriddenBy: req.user.id }, { upsert: true, new: true }); await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
+exports.requestCorrection = async (req, res) => { try { const { date, reason, requestedCheckIn, requestedCheckOut } = req.body; if (!date || !reason) return err(res, 'date and reason required', 400); const att = await Attendance.findOne({ user: req.user.id, date }); if (!att) return err(res, 'No record found', 404); att.correctionRequest = { status: 'pending', reason, requestedCheckIn: requestedCheckIn || att.checkIn, requestedCheckOut: requestedCheckOut || att.checkOut, requestedAt: new Date() }; await att.save(); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
+exports.reviewCorrection = async (req, res) => { try { const { action, adminNote } = req.body; if (!['approved', 'rejected'].includes(action)) return err(res, 'action must be approved or rejected', 400); const att = await Attendance.findById(req.params.id).populate('user', 'name _id'); if (!att) return err(res, 'Not found', 404); att.correctionRequest.status = action; att.correctionRequest.reviewedBy = req.user.id; att.correctionRequest.reviewedAt = new Date(); att.correctionRequest.adminNote = adminNote || ''; if (action === 'approved') { const s = await getSessionSettings(); const ci = att.correctionRequest.requestedCheckIn; const co = att.correctionRequest.requestedCheckOut; att.checkIn = ci; att.checkOut = co; if (ci && co) { const cls = classifyCheckIn(ci, s); const r = computeStatus(ci, co, s, { status: cls.status || 'present', flags: cls.flags || [], isLate: !!cls.isLate, isEarly: !!cls.isEarly }); att.flags = r.flags; att.status = r.status; att.totalHours = r.totalHours; att.isLate = !!cls.isLate; att.isEarly = !!cls.isEarly; att.lateMinutes = cls.lateMinutes || 0; att.earlyMinutes = cls.earlyMinutes || 0; } att.sessionActive = false; } await att.save(); await Notification.create({ user: att.user._id, title: `Correction ${action}`, message: `Your correction for ${att.date} was ${action}.`, type: action === 'approved' ? 'success' : 'error' }); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
+exports.getPendingCorrections = async (req, res) => { try { const recs = await Attendance.find({ 'correctionRequest.status': 'pending' }).populate('user', 'name department').sort({ 'correctionRequest.requestedAt': -1 }); ok(res, { success: true, corrections: recs }); } catch (e) { err(res, e.message); } };
+exports.autoMarkAbsent = async (req, res) => { try { const today = new Date().toISOString().split('T')[0]; const allUsers = await User.find({ isActive: true }).select('_id'); const todayRecs = await Attendance.find({ date: today }).select('user'); const checkedIn = new Set(todayRecs.map(r => r.user.toString())); const toMark = allUsers.filter(u => !checkedIn.has(u._id.toString())); const created = []; for (const u of toMark) { const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, autoMarked: true }); created.push(att); await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent for ${today}.`, type: 'error' }); } await logAudit(req.user?.id || 'system', 'AUTO_ABSENT', today, { count: created.length }, req.ip); ok(res, { success: true, count: created.length }); } catch (e) { err(res, e.message); } };
+exports.autoEndSessions = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const now   = new Date();
+    const now = new Date();
     const active = await Attendance.find({ date: today, sessionActive: true });
     let count = 0;
     let skipped = 0;
 
     for (const rec of active) {
       const settings = settingsFromAttendance(rec) || await getSessionSettings(rec.user);
-      const windows  = buildShiftWindows(rec.checkIn || now, settings);
+      const windows = buildShiftWindows(rec.checkIn || now, settings);
       if (now < windows.autoEnd && !req.body?.force) { skipped++; continue; }
 
       const closeAt = windows.autoEnd;
@@ -1294,14 +1294,14 @@ exports.autoEndSessions    = async (req, res) => {
       rec.sessionEndedAt = closeAt;
       rec.status = status;
       rec.autoClosed = true;
-      rec.flags = [...new Set([...(rec.flags||[]), ...flags, 'auto_ended'])];
+      rec.flags = [...new Set([...(rec.flags || []), ...flags, 'auto_ended'])];
       await rec.save();
       await Notification.create({ user: rec.user, title: 'Session Auto-Ended', message: `Session auto-closed at ${fmtTime(closeAt)}. Total: ${totalHours}h · ${status}`, type: 'warning' });
       count++;
     }
-    await logAudit(req.user?.id||'system', 'AUTO_END_SESSIONS', today, { count, skipped }, req.ip);
+    await logAudit(req.user?.id || 'system', 'AUTO_END_SESSIONS', today, { count, skipped }, req.ip);
     ok(res, { success: true, count, skipped, ranAt: now });
-  } catch(e) { err(res, e.message); }
+  } catch (e) { err(res, e.message); }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -1310,18 +1310,18 @@ exports.autoEndSessions    = async (req, res) => {
 const { Payslip } = require('../models');
 
 function computePayslipTotals(p) {
-  const earnings = (Number(p.basic)||0) + (Number(p.hra)||0) + (Number(p.da)||0) + (Number(p.specialAllowance)||0) + (Number(p.bonus)||0);
-  const deductions = (Number(p.pf)||0) + (Number(p.pt)||0) + (Number(p.tds)||0) + (Number(p.loan)||0);
+  const earnings = (Number(p.basic) || 0) + (Number(p.hra) || 0) + (Number(p.da) || 0) + (Number(p.specialAllowance) || 0) + (Number(p.bonus) || 0);
+  const deductions = (Number(p.pf) || 0) + (Number(p.pt) || 0) + (Number(p.tds) || 0) + (Number(p.loan) || 0);
   return { totalEarnings: earnings, totalDeductions: deductions, netPay: earnings - deductions };
 }
 
 exports.getPayslips = async (req, res) => {
   try {
-    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     const { month, year, userId } = req.query;
     const filter = isAdm ? {} : { user: req.user.id };
     if (month) filter.month = Number(month);
-    if (year)  filter.year  = Number(year);
+    if (year) filter.year = Number(year);
     if (userId && isAdm) filter.user = userId;
     const payslips = await Payslip.find(filter)
       .populate('user', 'name email department jobTitle employeeId salary')
@@ -1418,12 +1418,12 @@ exports.downloadPayslipPDF = async (req, res) => {
     const payslip = await Payslip.findById(req.params.id).populate('user', 'name email department jobTitle employeeId');
     if (!payslip) return err(res, 'Payslip not found', 404);
     // permission: own payslip or admin
-    const isAdm = ['admin','super_admin'].includes(req.user.role);
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
     if (!isAdm && payslip.user._id.toString() !== req.user.id) return err(res, 'Not authorized', 403);
 
     const company = await Company.findOne({}) || { name: 'Nexus Enterprises Exporters Pvt. Ltd.' };
-    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const monthLabel = `${monthNames[(payslip.month||1)-1]} ${payslip.year}`;
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const monthLabel = `${monthNames[(payslip.month || 1) - 1]} ${payslip.year}`;
     const emp = payslip.user || {};
     const totals = computePayslipTotals(payslip);
     const earnings = payslip.totalEarnings ?? totals.totalEarnings;
@@ -1431,7 +1431,7 @@ exports.downloadPayslipPDF = async (req, res) => {
     const netPay = payslip.netPay ?? totals.netPay;
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="payslip-${emp.name?.replace(/\s/g,'_') || 'emp'}-${payslip.month}-${payslip.year}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="payslip-${emp.name?.replace(/\s/g, '_') || 'emp'}-${payslip.month}-${payslip.year}.pdf"`);
 
     const doc = new PDFDocument({ size: 'A4', margin: 40 });
     doc.pipe(res);
@@ -1503,7 +1503,7 @@ exports.downloadPayslipPDF = async (req, res) => {
       doc.font('Helvetica-Bold').text(`Rs. ${Number(earningRows[i][1]).toLocaleString('en-IN')}`, 40 + colW - 110, rowY + 6, { width: 100, align: 'right' });
       doc.font('Helvetica').text(deductionRows[i][0], 50 + colW, rowY + 6);
       if (deductionRows[i][1] !== '') {
-        doc.font('Helvetica-Bold').text(`Rs. ${Number(deductionRows[i][1]).toLocaleString('en-IN')}`, 40 + 2*colW - 110, rowY + 6, { width: 100, align: 'right' });
+        doc.font('Helvetica-Bold').text(`Rs. ${Number(deductionRows[i][1]).toLocaleString('en-IN')}`, 40 + 2 * colW - 110, rowY + 6, { width: 100, align: 'right' });
       }
       rowY += 22;
     }
@@ -1516,7 +1516,7 @@ exports.downloadPayslipPDF = async (req, res) => {
     doc.text(`Rs. ${Number(earnings).toLocaleString('en-IN')}`, 40 + colW - 110, rowY + 9, { width: 100, align: 'right' });
     doc.fillColor('#dc2626');
     doc.text('Total Deductions', 50 + colW, rowY + 9);
-    doc.text(`Rs. ${Number(deductions).toLocaleString('en-IN')}`, 40 + 2*colW - 110, rowY + 9, { width: 100, align: 'right' });
+    doc.text(`Rs. ${Number(deductions).toLocaleString('en-IN')}`, 40 + 2 * colW - 110, rowY + 9, { width: 100, align: 'right' });
 
     rowY += 40;
 
@@ -1546,14 +1546,14 @@ function numberToWords(num) {
   if (num === 0) return 'Zero';
   const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
   const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-  function two(n) { if (n < 20) return ones[n]; return tens[Math.floor(n/10)] + (n%10 ? ' ' + ones[n%10] : ''); }
-  function three(n) { return (n >= 100 ? ones[Math.floor(n/100)] + ' Hundred ' : '') + two(n%100); }
+  function two(n) { if (n < 20) return ones[n]; return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : ''); }
+  function three(n) { return (n >= 100 ? ones[Math.floor(n / 100)] + ' Hundred ' : '') + two(n % 100); }
   num = Math.floor(Math.abs(num));
-  const crore = Math.floor(num/10000000); num %= 10000000;
-  const lakh  = Math.floor(num/100000);   num %= 100000;
-  const thou  = Math.floor(num/1000);     num %= 1000;
-  const rest  = num;
-  return [crore && three(crore)+' Crore', lakh && three(lakh)+' Lakh', thou && three(thou)+' Thousand', rest && three(rest)].filter(Boolean).join(' ').trim();
+  const crore = Math.floor(num / 10000000); num %= 10000000;
+  const lakh = Math.floor(num / 100000); num %= 100000;
+  const thou = Math.floor(num / 1000); num %= 1000;
+  const rest = num;
+  return [crore && three(crore) + ' Crore', lakh && three(lakh) + ' Lakh', thou && three(thou) + ' Thousand', rest && three(rest)].filter(Boolean).join(' ').trim();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1613,7 +1613,7 @@ try {
 let CustomQuote;
 try {
   CustomQuote = require('../models').Quote;
-} catch {}
+} catch { }
 if (!CustomQuote) {
   const mongoose = require('mongoose');
   const quoteSchema = new mongoose.Schema({
