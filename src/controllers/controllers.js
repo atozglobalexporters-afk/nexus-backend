@@ -5,7 +5,7 @@ const {
   Company, User, Attendance, WorkLog, Salary, Buyer, Order,
   AuditLog, Notification, Holiday,
   Department, Shift, Task, Project, Timesheet,
-  Payroll, Expense, Announcement, Leave, Organization,
+  Payroll, Expense, Announcement, Leave, Organization, BreakLog,
 } = require('../models');
 
 const ok = (res, data, status = 200) => res.status(status).json(data);
@@ -21,7 +21,7 @@ exports.getServerTime = (req, res) => ok(res, { time: new Date().toISOString() }
 // ── Dashboard ─────────────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     const [users, todayAtt, pendingSal, orders] = await Promise.all([
       User.countDocuments({ isActive: true }),
       Attendance.find({ date: today }),
@@ -99,7 +99,7 @@ exports.getAttendance = async (req, res) => {
 
 exports.checkOut = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return err(res, 'No check-in found for today', 400);
     if (rec.checkOut) return err(res, 'Already checked out', 400);
@@ -263,18 +263,9 @@ exports.updateCompany = async (req, res) => {
   try {
     let company = await Company.findOne({});
     if (!company) company = await Company.create({ name: 'Nexus Enterprises' });
-
-    const body = { ...(req.body || {}) };
-    if (body.maxSessionHours !== undefined) {
-      const maxSessionHours = Number(body.maxSessionHours);
-      body.maxSessionHours = Number.isFinite(maxSessionHours)
-        ? Math.min(20, Math.max(1, maxSessionHours))
-        : 8;
-    }
-
-    Object.assign(company, body);
+    Object.assign(company, req.body);
     await company.save();
-    await logAudit(req.user.id, 'UPDATE_COMPANY', company._id, body, req.ip);
+    await logAudit(req.user.id, 'UPDATE_COMPANY', company._id, req.body, req.ip);
     ok(res, { company });
   } catch (e) { err(res, e.message); }
 };
@@ -940,7 +931,28 @@ exports.getTasksReport = async (req, res) => {
   } catch (e) { err(res, e.message); }
 };
 
-// ── Session helpers ───────────────────────────────────────────
+// ── Session helpers / Attendance Engine (Company Settings only, IST) ─────────
+const IST_TZ = 'Asia/Kolkata';
+
+function clampNumber(value, fallback, min = -Infinity, max = Infinity) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function istNow() {
+  // Converts current instant to an IST wall-clock Date for business-rule comparisons.
+  return new Date(new Date().toLocaleString('en-US', { timeZone: IST_TZ }));
+}
+
+function istDateKey(date = new Date()) {
+  const d = new Date(date.toLocaleString('en-US', { timeZone: IST_TZ }));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function parseHHMM(value, fallbackHour = 9, fallbackMinute = 0) {
   if (!value || typeof value !== 'string' || !value.includes(':')) {
     return { hour: fallbackHour, minute: fallbackMinute };
@@ -957,90 +969,33 @@ function minutesOr(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function numberInRange(value, fallback, min, max) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
-function getISTParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).formatToParts(date).reduce((acc, p) => {
-    if (p.type !== 'literal') acc[p.type] = p.value;
-    return acc;
-  }, {});
-
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day),
-    hour: Number(parts.hour),
-    minute: Number(parts.minute),
-    second: Number(parts.second || 0),
-  };
-}
-
-function istDateKey(date = new Date()) {
-  const p = getISTParts(date);
-  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
-}
-
-function makeISTDate(year, month, day, hour = 0, minute = 0, second = 0) {
-  // Convert an IST wall-clock time into the correct UTC instant for Mongo/JS Date.
-  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, second, 0));
-}
-
 function buildCompanyLegacySettings(company) {
   return {
-    source: 'company_legacy',
+    source: 'company_settings',
     shiftId: null,
-    name: company?.name ? `${company.name} Default Shift` : 'Company Default Shift',
-    startHour: company?.officeStartHour ?? parseInt(process.env.OFFICE_START_HOUR || '9'),
-    startMinute: company?.officeStartMinute ?? parseInt(process.env.OFFICE_START_MINUTE || '0'),
-    endHour: company?.officeEndHour ?? parseInt(process.env.OFFICE_END_HOUR || '18'),
-    endMinute: company?.officeEndMinute ?? parseInt(process.env.OFFICE_END_MINUTE || '0'),
-    gracePeriod: company?.gracePeriodMinutes ?? parseInt(process.env.GRACE_PERIOD_MINUTES || '15'),
-    earlyWindow: company?.earlyWindowMinutes ?? parseInt(process.env.EARLY_WINDOW_MINUTES || '30'),
-    halfDayCutoffMins: company?.halfDayCutoffMinutes ?? parseInt(process.env.HALFDAY_CUTOFF_MINUTES || '105'),
-    absentCutoffMins: company?.absentCutoffMinutes ?? parseInt(process.env.ABSENT_CUTOFF_MINUTES || '165'),
-    minHours: company?.minWorkingHours ?? parseFloat(process.env.MIN_WORKING_HOURS || '4'),
-    halfDayHours: company?.halfDayHours ?? parseFloat(process.env.HALF_DAY_HOURS || '2'),
-    autoEndBufferMins: company?.autoEndBufferMinutes ?? parseInt(process.env.AUTO_END_BUFFER_MIN || '0'),
-    autoEndHour: company?.autoEndHour ?? parseInt(process.env.AUTO_END_HOUR || '23'),
-    autoEndMinute: company?.autoEndMinute ?? parseInt(process.env.AUTO_END_MINUTE || '59'),
-    maxSessionHours: numberInRange(company?.maxSessionHours ?? process.env.MAX_SESSION_HOURS ?? 8, 8, 1, 20),
+    name: company?.name ? `${company.name} Attendance Session` : 'Company Attendance Session',
+    startHour: clampNumber(company?.officeStartHour ?? process.env.OFFICE_START_HOUR, 9, 0, 23),
+    startMinute: clampNumber(company?.officeStartMinute ?? process.env.OFFICE_START_MINUTE, 0, 0, 59),
+    endHour: clampNumber(company?.officeEndHour ?? process.env.OFFICE_END_HOUR, 18, 0, 23),
+    endMinute: clampNumber(company?.officeEndMinute ?? process.env.OFFICE_END_MINUTE, 0, 0, 59),
+    gracePeriod: clampNumber(company?.gracePeriodMinutes ?? process.env.GRACE_PERIOD_MINUTES, 15, 0, 240),
+    earlyWindow: clampNumber(company?.earlyWindowMinutes ?? process.env.EARLY_WINDOW_MINUTES, 30, 0, 240),
+    minHours: clampNumber(company?.minWorkingHours ?? process.env.MIN_WORKING_HOURS, 4, 0, 24),
+    halfDayHours: clampNumber(company?.halfDayHours ?? process.env.HALF_DAY_HOURS, 2, 0, 24),
+    autoEndBufferMins: clampNumber(company?.autoEndBufferMinutes ?? process.env.AUTO_END_BUFFER_MIN, 0, 0, 240),
+    autoEndHour: clampNumber(company?.autoEndHour ?? process.env.AUTO_END_HOUR, 23, 0, 23),
+    autoEndMinute: clampNumber(company?.autoEndMinute ?? process.env.AUTO_END_MINUTE, 59, 0, 59),
+    maxSessionHours: clampNumber(company?.maxSessionHours ?? process.env.MAX_SESSION_HOURS, 8, 1, 20),
+    breakEnabled: company?.breakEnabled !== false,
+    breakAllowedMinutes: clampNumber(company?.breakAllowedMinutes, 15, 1, 240),
+    maxBreaksPerDay: clampNumber(company?.maxBreaksPerDay, 2, 0, 20),
   };
 }
 
-function istDayKeys(date = new Date()) { const d = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })); const full = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][d.getDay()]; const short = full.slice(0, 3); return [full, short, full[0].toUpperCase() + full.slice(1), short[0].toUpperCase() + short.slice(1)]; }
-
-function shiftDayMatchQuery(date = new Date()) { const keys = istDayKeys(date); return { $or: [{ days: { $exists: false } }, { days: { $size: 0 } }, { days: { $in: keys } }] }; }
-
-function settingsFromShift(shift, source) {
-  const st = parseHHMM(shift.startTime, 9, 0);
-  const en = parseHHMM(shift.endTime, 18, 0);
-  return {
-    source,
-    shiftId: shift._id,
-    name: shift.name,
-    startHour: st.hour,
-    startMinute: st.minute,
-    endHour: en.hour,
-    endMinute: en.minute,
-    gracePeriod: minutesOr(shift.gracePeriodMinutes, 15),
-    earlyWindow: minutesOr(shift.earlyWindowMinutes, 30),
-    halfDayCutoffMins: minutesOr(shift.halfDayCutoffMinutes, 105),
-    absentCutoffMins: minutesOr(shift.absentCutoffMinutes, 165),
-    minHours: minutesOr(shift.minWorkingHours, 4),
-    halfDayHours: minutesOr(shift.halfDayHours, 2),
-    autoEndBufferMins: minutesOr(shift.autoEndBufferMinutes, 0),
-    autoEndHour: 23,
-    autoEndMinute: 59,
-  };
+async function getSessionSettings() {
+  let company = await Company.findOne({});
+  if (!company) company = await Company.create({ name: 'Nexus Enterprises' });
+  return buildCompanyLegacySettings(company);
 }
 
 function snapshotFromSettings(settings) {
@@ -1051,8 +1006,8 @@ function snapshotFromSettings(settings) {
     endTime: `${pad(settings.endHour)}:${pad(settings.endMinute)}`,
     gracePeriodMinutes: settings.gracePeriod,
     earlyWindowMinutes: settings.earlyWindow,
-    halfDayCutoffMinutes: settings.halfDayCutoffMins,
-    absentCutoffMinutes: settings.absentCutoffMins,
+    halfDayCutoffMinutes: 0,
+    absentCutoffMinutes: settings.gracePeriod,
     minWorkingHours: settings.minHours,
     halfDayHours: settings.halfDayHours,
     autoEndBufferMinutes: settings.autoEndBufferMins,
@@ -1065,7 +1020,7 @@ function settingsFromAttendance(rec) {
   const st = parseHHMM(rec.shiftSnapshot.startTime, 9, 0);
   const en = parseHHMM(rec.shiftSnapshot.endTime, 18, 0);
   return {
-    source: rec.shiftSource || 'snapshot',
+    source: rec.shiftSource || 'company_settings',
     shiftId: rec.shiftId || null,
     name: rec.shiftSnapshot.name || 'Attendance Snapshot',
     startHour: st.hour,
@@ -1074,49 +1029,35 @@ function settingsFromAttendance(rec) {
     endMinute: en.minute,
     gracePeriod: minutesOr(rec.shiftSnapshot.gracePeriodMinutes, 15),
     earlyWindow: minutesOr(rec.shiftSnapshot.earlyWindowMinutes, 30),
-    halfDayCutoffMins: minutesOr(rec.shiftSnapshot.halfDayCutoffMinutes, 105),
-    absentCutoffMins: minutesOr(rec.shiftSnapshot.absentCutoffMinutes, 165),
     minHours: minutesOr(rec.shiftSnapshot.minWorkingHours, 4),
     halfDayHours: minutesOr(rec.shiftSnapshot.halfDayHours, 2),
     autoEndBufferMins: minutesOr(rec.shiftSnapshot.autoEndBufferMinutes, 0),
+    maxSessionHours: minutesOr(rec.shiftSnapshot.maxSessionHours, 8),
     autoEndHour: 23,
     autoEndMinute: 59,
   };
 }
 
-async function getSessionSettings(userId = null) {
-  // Attendance is intentionally driven ONLY by Company Settings.
-  // Shift Management is now a separate scheduling/display module and must not affect attendance status.
-  const company = await Company.findOne();
-  return buildCompanyLegacySettings(company);
-}
-
-// Returns { shiftStart, shiftEnd, graceCutoff, halfDayCutoff, absentCutoff, earlyOpen, autoEnd } as Date objects for the supplied reference day.
 function buildShiftWindows(refDate, settings) {
-  const parts = getISTParts(refDate);
-  const shiftStart = makeISTDate(parts.year, parts.month, parts.day, settings.startHour, settings.startMinute, 0);
-  let shiftEnd = makeISTDate(parts.year, parts.month, parts.day, settings.endHour, settings.endMinute, 0);
-
-  // If end <= start, the work session wraps past midnight.
-  if (shiftEnd <= shiftStart) shiftEnd = new Date(shiftEnd.getTime() + 24 * 60 * 60000);
-
-  const graceCutoff = new Date(shiftStart.getTime() + settings.gracePeriod * 60000);
-  const halfDayCutoff = new Date(graceCutoff.getTime() + settings.halfDayCutoffMins * 60000);
-  const absentCutoff = new Date(graceCutoff.getTime() + settings.absentCutoffMins * 60000);
+  const d = new Date(refDate);
+  const shiftStart = new Date(d); shiftStart.setHours(settings.startHour, settings.startMinute, 0, 0);
+  const shiftEnd = new Date(d); shiftEnd.setHours(settings.endHour, settings.endMinute, 0, 0);
+  if (shiftEnd <= shiftStart) shiftEnd.setDate(shiftEnd.getDate() + 1);
   const earlyOpen = new Date(shiftStart.getTime() - settings.earlyWindow * 60000);
-  const autoEnd = new Date(shiftEnd.getTime() + Math.max(0, settings.autoEndBufferMins || 0) * 60000);
-  const maxSessionEnd = new Date(new Date(refDate).getTime() + numberInRange(settings.maxSessionHours, 8, 1, 20) * 3600000);
-
-  return { shiftStart, shiftEnd, graceCutoff, halfDayCutoff, absentCutoff, earlyOpen, autoEnd, maxSessionEnd };
+  const graceCutoff = new Date(shiftStart.getTime() + settings.gracePeriod * 60000);
+  const autoEnd = new Date(shiftEnd.getTime() + settings.autoEndBufferMins * 60000);
+  return { shiftStart, shiftEnd, earlyOpen, graceCutoff, autoEnd };
 }
 
-// Determine initial status from CHECK-IN time alone (no hours-worked downgrade yet).
-// Used at the moment of check-in to decide if the click is even allowed and what status to seed.
+function fmtTime(d) {
+  return new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
 function classifyCheckIn(checkInTime, settings) {
   const t = new Date(checkInTime);
   const w = buildShiftWindows(t, settings);
   const flags = [];
-  let status, isEarly = false, isLate = false, earlyMinutes = 0, lateMinutes = 0;
+  let status = 'present', isEarly = false, isLate = false, earlyMinutes = 0, lateMinutes = 0;
 
   if (t < w.earlyOpen) {
     return { allowed: false, reason: 'too_early', flags: ['too_early'], status: null, message: `Too early — check-in window opens at ${fmtTime(w.earlyOpen)}.` };
@@ -1128,49 +1069,51 @@ function classifyCheckIn(checkInTime, settings) {
     flags.push('early_checkin');
   } else if (t <= w.graceCutoff) {
     status = 'present';
-  } else if (t <= w.halfDayCutoff) {
-    isLate = true;
-    lateMinutes = Math.round((t - w.shiftStart) / 60000);
-    status = 'late';
-    flags.push('late');
-  } else if (t <= w.absentCutoff) {
-    isLate = true;
-    lateMinutes = Math.round((t - w.shiftStart) / 60000);
-    status = 'half_day';
-    flags.push('late', 'late_arrival_half_day');
+    if (t > w.shiftStart) {
+      isLate = true;
+      lateMinutes = Math.round((t - w.shiftStart) / 60000);
+      flags.push('within_grace');
+    }
   } else {
-    // Past absent cutoff — block. Admin must use override.
-    return { allowed: false, reason: 'past_absent_cutoff', flags: ['too_late'], status: 'absent', message: `Too late — you are past the absent cutoff (${fmtTime(w.absentCutoff)}). Contact admin for an override.` };
+    // Strict Nexus policy: after grace, attendance is absent immediately,
+    // but EMS session is allowed to start so admin can still see the employee as active.
+    status = 'absent';
+    isLate = true;
+    lateMinutes = Math.round((t - w.shiftStart) / 60000);
+    flags.push('after_grace_absent');
   }
+
   return { allowed: true, status, flags, isEarly, isLate, earlyMinutes, lateMinutes, windows: w };
 }
 
-function fmtTime(d) {
-  return new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+function safeHoursBetween(start, end) {
+  if (!start || !end) return 0;
+  const h = (new Date(end) - new Date(start)) / 3600000;
+  if (!Number.isFinite(h) || h < 0 || h > 24) return 0;
+  return parseFloat(h.toFixed(2));
 }
 
-// Re-evaluate at CHECK-OUT: hours worked may downgrade status (e.g. half_day if < 4 hrs even if Present at check-in).
 function computeStatus(checkIn, checkOut, settings, checkInClass) {
   const w = buildShiftWindows(checkIn, settings);
   const flags = [...(checkInClass?.flags || [])];
-  if (checkOut && new Date(checkOut) < w.shiftEnd) flags.push('early_logout');
-  let totalHours = checkOut
-    ? parseFloat(((new Date(checkOut) - new Date(checkIn)) / 3600000).toFixed(2))
-    : 0;
-  if (!Number.isFinite(totalHours) || totalHours < 0 || totalHours > 24) totalHours = 0;
-
+  const totalHours = safeHoursBetween(checkIn, checkOut);
   let status = checkInClass?.status || 'present';
 
-  // Hours-worked downgrade (only ever moves the status WORSE, never better)
-  if (totalHours < settings.halfDayHours) {
-    status = 'absent';
-    if (!flags.includes('insufficient_hours')) flags.push('insufficient_hours');
-  } else if (totalHours < settings.minHours) {
-    // half_day unless already absent
-    if (status !== 'absent') status = 'half_day';
-    if (!flags.includes('insufficient_hours')) flags.push('insufficient_hours');
+  if (status === 'absent') {
+    if (!flags.includes('after_grace_absent')) flags.push('after_grace_absent');
+    return { flags: [...new Set(flags)], status: 'absent', totalHours };
   }
-  // If check-in put us at half_day or worse, never upgrade back to present/early/late
+
+  if (checkOut && new Date(checkOut) < w.shiftEnd) {
+    status = 'half_day';
+    flags.push('early_logout');
+  }
+
+  if (totalHours < settings.minHours && status !== 'half_day') {
+    status = 'half_day';
+    flags.push('insufficient_hours');
+  }
+
   return { flags: [...new Set(flags)], status, totalHours };
 }
 
@@ -1178,52 +1121,47 @@ exports.checkIn = async (req, res) => {
   try {
     const today = istDateKey();
     const existing = await Attendance.findOne({ user: req.user.id, date: today });
-    if (existing) {
-      // Re-login UX: if session already completed, surface the record so frontend shows "Already done today"
-      if (existing.sessionActive) {
-        return res.status(400).json({ success: false, code: 'ALREADY_ACTIVE', message: 'You are already checked in.', attendance: existing });
-      }
-      if (existing.checkOut) {
-        return res.status(400).json({ success: false, code: 'ALREADY_COMPLETED', message: 'Session already completed for today.', attendance: existing });
-      }
-      // existing record with no checkIn (e.g. auto-marked absent) — allow new check-in to overwrite
-    }
-    const settings = await getSessionSettings(req.user.id);
-    const now = new Date();
+    if (existing?.sessionActive) return res.status(400).json({ success: false, code: 'ALREADY_ACTIVE', message: 'You are already active.', attendance: existing });
+    if (existing?.checkOut && !existing.autoMarked) return res.status(400).json({ success: false, code: 'ALREADY_COMPLETED', message: 'Attendance session already completed for today.', attendance: existing });
+
+    const settings = await getSessionSettings();
+    const now = istNow();
     const cls = classifyCheckIn(now, settings);
-    if (!cls.allowed) {
-      return res.status(400).json({ success: false, code: cls.reason.toUpperCase(), message: cls.message, suggestedStatus: cls.status });
-    }
+    if (!cls.allowed) return res.status(400).json({ success: false, code: cls.reason.toUpperCase(), message: cls.message, suggestedStatus: cls.status });
+
     const payload = {
       checkIn: now,
-      sessionActive: true,
+      checkOut: null,
+      totalHours: 0,
       status: cls.status,
-      flags: cls.flags,
       isLate: cls.isLate,
       isEarly: cls.isEarly,
       lateMinutes: cls.lateMinutes,
       earlyMinutes: cls.earlyMinutes,
-      checkOut: null,
-      totalHours: 0,
+      flags: cls.flags,
+      sessionActive: true,
       autoMarked: false,
+      autoClosed: false,
       loginStatus: 'online',
       sessionStartedAt: now,
       sessionEndedAt: null,
-      shiftSource: settings.source,
-      shiftId: settings.shiftId,
+      forcedLogoutReason: '',
+      shiftSource: 'company_settings',
+      shiftId: null,
       shiftSnapshot: snapshotFromSettings(settings),
+      ipAddress: req.ip,
     };
-    let att;
-    if (existing) {
-      att = await Attendance.findByIdAndUpdate(existing._id, payload, { new: true });
-    } else {
-      att = await Attendance.create({ user: req.user.id, date: today, ipAddress: req.ip, ...payload });
-    }
-    await logAudit(req.user.id, 'ATTENDANCE_CHECKIN', att._id, { time: now, status: cls.status, isLate: cls.isLate, isEarly: cls.isEarly, lateMinutes: cls.lateMinutes }, req.ip);
-    if (cls.isLate) await Notification.create({ user: req.user.id, title: 'Late Check-in', message: `You checked in ${cls.lateMinutes} minutes late. Status: ${cls.status}.`, type: 'warning' });
+
+    const att = existing
+      ? await Attendance.findByIdAndUpdate(existing._id, payload, { new: true })
+      : await Attendance.create({ user: req.user.id, date: today, ...payload });
+
+    await logAudit(req.user.id, 'ATTENDANCE_CHECKIN', att._id, { time: now, status: cls.status, lateMinutes: cls.lateMinutes, earlyMinutes: cls.earlyMinutes }, req.ip);
+    if (cls.status === 'absent') await Notification.create({ user: req.user.id, title: 'Marked Absent', message: `You checked in after the grace period. Attendance marked absent, but your EMS session is active.`, type: 'error' });
     else if (cls.isEarly) await Notification.create({ user: req.user.id, title: 'Early Check-in', message: `You checked in ${cls.earlyMinutes} minutes early.`, type: 'info' });
-    const msg = cls.isLate ? `Checked in - ${cls.lateMinutes} min late (${cls.status})` : cls.isEarly ? `Checked in ${cls.earlyMinutes} min early` : 'Checked in on time';
-    ok(res, { success: true, attendance: att, message: msg }, 201);
+    else if (cls.isLate) await Notification.create({ user: req.user.id, title: 'Within Grace Check-in', message: `You checked in ${cls.lateMinutes} minutes after shift start, within grace.`, type: 'warning' });
+
+    ok(res, { success: true, attendance: att, settings, message: `Checked in · ${cls.status}` });
   } catch (e) { err(res, e.message); }
 };
 
@@ -1231,18 +1169,14 @@ exports.checkOutFull = async (req, res) => {
   try {
     const today = istDateKey();
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
-    if (!rec) return res.status(400).json({ success: false, message: 'No check-in found.' });
+    if (!rec) return res.status(400).json({ success: false, message: 'No attendance session found for today.' });
     if (!rec.sessionActive && rec.checkOut) return res.status(400).json({ success: false, message: 'Session already ended.', attendance: rec });
-    const settings = await getSessionSettings(req.user.id);
-    const now = new Date();
-    // Rebuild the check-in classification from the stored fields so downgrade logic respects original status
-    const checkInClass = {
-      status: rec.status,
-      flags: rec.flags || [],
-      isLate: rec.isLate,
-      isEarly: rec.isEarly,
-    };
+
+    const settings = settingsFromAttendance(rec) || await getSessionSettings();
+    const now = istNow();
+    const checkInClass = { status: rec.status, flags: rec.flags || [], isLate: rec.isLate, isEarly: rec.isEarly };
     const { flags, status, totalHours } = computeStatus(rec.checkIn, now, settings, checkInClass);
+
     rec.checkOut = now;
     rec.totalHours = totalHours;
     rec.sessionActive = false;
@@ -1251,9 +1185,8 @@ exports.checkOutFull = async (req, res) => {
     rec.status = status;
     rec.flags = flags;
     await rec.save();
+    await BreakLog.updateMany({ user: req.user.id, date: today, status: 'on_break' }, { status: 'late_return', breakEnd: now, employeeReason: 'Auto-closed during checkout' });
     await logAudit(req.user.id, 'ATTENDANCE_CHECKOUT', rec._id, { time: now, totalHours, status }, req.ip);
-    if (flags.includes('early_logout')) await Notification.create({ user: req.user.id, title: 'Early Logout', message: `You left before shift end. Total: ${totalHours}h.`, type: 'warning' });
-    if (flags.includes('insufficient_hours')) await Notification.create({ user: req.user.id, title: 'Insufficient Hours', message: `You worked ${totalHours}h. Status downgraded to ${status}.`, type: 'warning' });
     ok(res, { success: true, attendance: rec, message: `Checked out. Total: ${totalHours}h · ${status}` });
   } catch (e) { err(res, e.message); }
 };
@@ -1262,44 +1195,31 @@ exports.getTodayStatus = async (req, res) => {
   try {
     const today = istDateKey();
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
-    const settings = await getSessionSettings(req.user.id);
-    const now = new Date();
+    const settings = rec ? (settingsFromAttendance(rec) || await getSessionSettings()) : await getSessionSettings();
+    const now = istNow();
     const windows = buildShiftWindows(now, settings);
-    let liveStatus = 'not_started', liveHours = 0;
-    // Inform the client what the status WOULD BE if they checked in right now
-    const wouldBe = classifyCheckIn(now, settings);
-    if (rec) {
-      if (rec.sessionActive && rec.checkIn) {
-        liveStatus = 'working';
-        if (!rec.checkIn || isNaN(new Date(rec.checkIn).getTime())) {
-          liveHours = 0;
-        } else {
-          liveHours = parseFloat(
-            ((Date.now() - new Date(rec.checkIn).getTime()) / 3600000).toFixed(2)
-          );
-
-          if (liveHours < 0 || liveHours > 24) {
-            liveHours = 0;
-          }
-        }
-      } else if (rec.checkOut) {
-        liveStatus = 'completed';
-        liveHours = rec.totalHours;
-      }
+    const activeBreak = await BreakLog.findOne({ user: req.user.id, date: today, status: 'on_break' }).sort({ breakStart: -1 });
+    let liveStatus = 'inactive', liveHours = 0;
+    if (rec?.sessionActive && rec.checkIn) {
+      liveStatus = activeBreak ? 'on_break' : 'active';
+      liveHours = safeHoursBetween(rec.checkIn, now);
+    } else if (rec?.checkOut) {
+      liveStatus = 'completed';
+      liveHours = rec.totalHours || 0;
     }
+    const wouldBe = classifyCheckIn(now, settings);
     ok(res, {
       success: true,
       attendance: rec,
+      activeBreak,
       liveStatus,
       liveHours,
       settings,
       windows: {
         shiftStart: windows.shiftStart,
         shiftEnd: windows.shiftEnd,
-        graceCutoff: windows.graceCutoff,
-        halfDayCutoff: windows.halfDayCutoff,
-        absentCutoff: windows.absentCutoff,
         earlyOpen: windows.earlyOpen,
+        graceCutoff: windows.graceCutoff,
         autoEnd: windows.autoEnd,
       },
       wouldBe: { allowed: wouldBe.allowed, status: wouldBe.status, reason: wouldBe.reason, message: wouldBe.message },
@@ -1307,44 +1227,71 @@ exports.getTodayStatus = async (req, res) => {
   } catch (e) { err(res, e.message); }
 };
 
+exports.adminOverride = async (req, res) => {
+  try {
+    const { userId, date, status, checkIn, checkOut, note } = req.body;
+    if (!userId || !date || !status) return err(res, 'userId, date and status required', 400);
+    const settings = await getSessionSettings();
+    let totalHours = 0, flags = [];
+    if (checkIn && checkOut) {
+      const cls = classifyCheckIn(new Date(checkIn), settings);
+      const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status: status || cls.status || 'present', flags: cls.flags || [] });
+      totalHours = r.totalHours; flags = r.flags;
+    }
+    const att = await Attendance.findOneAndUpdate({ user: userId, date }, {
+      user: userId, date, status, checkIn: checkIn || null, checkOut: checkOut || null, totalHours, flags,
+      sessionActive: false, loginStatus: 'offline', sessionEndedAt: checkOut || new Date(), shiftSource: 'company_settings', shiftId: null,
+      shiftSnapshot: snapshotFromSettings(settings), adminOverride: true, adminNote: note || '', overriddenBy: req.user.id,
+    }, { upsert: true, new: true });
+    await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip);
+    ok(res, { success: true, attendance: att });
+  } catch (e) { err(res, e.message); }
+};
 
-exports.adminOverride = async (req, res) => { try { const { userId, date, status, checkIn, checkOut, note } = req.body; if (!userId || !date || !status) return err(res, 'userId, date and status required', 400); const settings = await getSessionSettings(userId); let totalHours = 0, flags = []; if (checkIn && checkOut) { const r = computeStatus(new Date(checkIn), new Date(checkOut), settings, { status, flags: [], isLate: false, isEarly: false }); totalHours = r.totalHours; flags = r.flags; } const att = await Attendance.findOneAndUpdate({ user: userId, date }, { user: userId, date, status, checkIn: checkIn || null, checkOut: checkOut || null, totalHours, flags, sessionActive: false, loginStatus: 'offline', sessionEndedAt: checkOut || new Date(), shiftSource: settings.source, shiftId: settings.shiftId, shiftSnapshot: snapshotFromSettings(settings), adminOverride: true, adminNote: note || '', overriddenBy: req.user.id }, { upsert: true, new: true }); await logAudit(req.user.id, 'ADMIN_OVERRIDE', att._id, { userId, date, status }, req.ip); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
 exports.requestCorrection = async (req, res) => { try { const { date, reason, requestedCheckIn, requestedCheckOut } = req.body; if (!date || !reason) return err(res, 'date and reason required', 400); const att = await Attendance.findOne({ user: req.user.id, date }); if (!att) return err(res, 'No record found', 404); att.correctionRequest = { status: 'pending', reason, requestedCheckIn: requestedCheckIn || att.checkIn, requestedCheckOut: requestedCheckOut || att.checkOut, requestedAt: new Date() }; await att.save(); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
-exports.reviewCorrection = async (req, res) => { try { const { action, adminNote } = req.body; if (!['approved', 'rejected'].includes(action)) return err(res, 'action must be approved or rejected', 400); const att = await Attendance.findById(req.params.id).populate('user', 'name _id'); if (!att) return err(res, 'Not found', 404); att.correctionRequest.status = action; att.correctionRequest.reviewedBy = req.user.id; att.correctionRequest.reviewedAt = new Date(); att.correctionRequest.adminNote = adminNote || ''; if (action === 'approved') { const s = await getSessionSettings(att.user?._id || att.user); const ci = att.correctionRequest.requestedCheckIn; const co = att.correctionRequest.requestedCheckOut; att.checkIn = ci; att.checkOut = co; if (ci && co) { const cls = classifyCheckIn(ci, s); const r = computeStatus(ci, co, s, { status: cls.status || 'present', flags: cls.flags || [], isLate: !!cls.isLate, isEarly: !!cls.isEarly }); att.flags = r.flags; att.status = r.status; att.totalHours = r.totalHours; att.isLate = !!cls.isLate; att.isEarly = !!cls.isEarly; att.lateMinutes = cls.lateMinutes || 0; att.earlyMinutes = cls.earlyMinutes || 0; } att.sessionActive = false; } await att.save(); await Notification.create({ user: att.user._id, title: `Correction ${action}`, message: `Your correction for ${att.date} was ${action}.`, type: action === 'approved' ? 'success' : 'error' }); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
+exports.reviewCorrection = async (req, res) => { try { const { action, adminNote } = req.body; if (!['approved', 'rejected'].includes(action)) return err(res, 'action must be approved or rejected', 400); const att = await Attendance.findById(req.params.id).populate('user', 'name _id'); if (!att) return err(res, 'Not found', 404); att.correctionRequest.status = action; att.correctionRequest.reviewedBy = req.user.id; att.correctionRequest.reviewedAt = new Date(); att.correctionRequest.adminNote = adminNote || ''; if (action === 'approved') { const s = await getSessionSettings(); const ci = att.correctionRequest.requestedCheckIn; const co = att.correctionRequest.requestedCheckOut; att.checkIn = ci; att.checkOut = co; if (ci && co) { const cls = classifyCheckIn(ci, s); const r = computeStatus(ci, co, s, { status: cls.status || 'present', flags: cls.flags || [], isLate: !!cls.isLate, isEarly: !!cls.isEarly }); att.flags = r.flags; att.status = r.status; att.totalHours = r.totalHours; att.isLate = !!cls.isLate; att.isEarly = !!cls.isEarly; att.lateMinutes = cls.lateMinutes || 0; att.earlyMinutes = cls.earlyMinutes || 0; } att.sessionActive = false; } await att.save(); await Notification.create({ user: att.user._id, title: `Correction ${action}`, message: `Your correction for ${att.date} was ${action}.`, type: action === 'approved' ? 'success' : 'error' }); ok(res, { success: true, attendance: att }); } catch (e) { err(res, e.message); } };
 exports.getPendingCorrections = async (req, res) => { try { const recs = await Attendance.find({ 'correctionRequest.status': 'pending' }).populate('user', 'name department').sort({ 'correctionRequest.requestedAt': -1 }); ok(res, { success: true, corrections: recs }); } catch (e) { err(res, e.message); } };
-exports.autoMarkAbsent = async (req, res) => { try { const today = istDateKey(); const allUsers = await User.find({ isActive: true }).select('_id'); const todayRecs = await Attendance.find({ date: today }).select('user'); const checkedIn = new Set(todayRecs.map(r => r.user.toString())); const toMark = allUsers.filter(u => !checkedIn.has(u._id.toString())); const created = []; for (const u of toMark) { const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, autoMarked: true }); created.push(att); await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent for ${today}.`, type: 'error' }); } await logAudit(req.user?.id || 'system', 'AUTO_ABSENT', today, { count: created.length }, req.ip); ok(res, { success: true, count: created.length }); } catch (e) { err(res, e.message); } };
+
+exports.autoMarkAbsent = async (req, res) => {
+  try {
+    const today = istDateKey();
+    const settings = await getSessionSettings();
+    const now = istNow();
+    const windows = buildShiftWindows(now, settings);
+    if (now <= windows.graceCutoff && !req.body?.force) return ok(res, { success: true, count: 0, skipped: true, message: 'Grace period has not ended yet.' });
+    const allUsers = await User.find({ isActive: true }).select('_id');
+    const todayRecs = await Attendance.find({ date: today }).select('user');
+    const hasRecord = new Set(todayRecs.map(r => r.user.toString()));
+    const created = [];
+    for (const u of allUsers) {
+      if (hasRecord.has(u._id.toString())) continue;
+      const att = await Attendance.create({ user: u._id, date: today, status: 'absent', sessionActive: false, loginStatus: 'offline', autoMarked: true, flags: ['auto_absent_after_grace'], shiftSource: 'company_settings', shiftSnapshot: snapshotFromSettings(settings) });
+      created.push(att);
+      await Notification.create({ user: u._id, title: 'Marked Absent', message: `You were automatically marked absent after the grace period for ${today}.`, type: 'error' });
+    }
+    await logAudit(req.user?.id || 'system', 'AUTO_ABSENT_AFTER_GRACE', today, { count: created.length }, req.ip);
+    ok(res, { success: true, count: created.length });
+  } catch (e) { err(res, e.message); }
+};
+
 exports.autoEndSessions = async (req, res) => {
   try {
-    const now = new Date();
-    // Do NOT limit to today. This catches broken 29h+ sessions from previous dates too.
+    const now = istNow();
     const active = await Attendance.find({ sessionActive: true });
-    let count = 0;
-    let skipped = 0;
-
+    let count = 0, skipped = 0;
     for (const rec of active) {
-      const settings = await getSessionSettings(rec.user);
-      const checkInTime = rec.checkIn || rec.sessionStartedAt || now;
-      const windows = buildShiftWindows(checkInTime, settings);
-      const maxSessionEnd = new Date(new Date(checkInTime).getTime() + numberInRange(settings.maxSessionHours, 8, 1, 20) * 3600000);
-
-      let closeAt = null;
-      let forcedLogoutReason = '';
-
-      if (req.body?.force) {
-        closeAt = now;
-        forcedLogoutReason = 'admin_force_logout';
-      } else if (now >= maxSessionEnd) {
-        closeAt = maxSessionEnd;
-        forcedLogoutReason = 'max_session_exceeded';
-      } else if (now >= windows.autoEnd) {
-        closeAt = windows.autoEnd;
-        forcedLogoutReason = 'shift_end_reached';
-      }
-
-      if (!closeAt) { skipped++; continue; }
-
+      const settings = settingsFromAttendance(rec) || await getSessionSettings();
+      const windows = buildShiftWindows(rec.checkIn || now, settings);
+      const maxEnd = rec.checkIn ? new Date(new Date(rec.checkIn).getTime() + settings.maxSessionHours * 3600000) : now;
+      let shouldClose = false;
+      let closeAt = now;
+      let reason = '';
+      if (now >= windows.autoEnd) { shouldClose = true; closeAt = windows.autoEnd; reason = 'shift_end_reached'; }
+      if (now >= maxEnd) { shouldClose = true; closeAt = maxEnd; reason = 'max_session_exceeded'; }
+      if (req.body?.force) { shouldClose = true; closeAt = now; reason = 'admin_force_logout'; }
+      if (!shouldClose) { skipped++; continue; }
       const checkInClass = { status: rec.status, flags: rec.flags || [], isLate: rec.isLate, isEarly: rec.isEarly };
-      const { flags, status, totalHours } = computeStatus(checkInTime, closeAt, settings, checkInClass);
+      const { flags, status, totalHours } = computeStatus(rec.checkIn, closeAt, settings, checkInClass);
       rec.checkOut = closeAt;
       rec.totalHours = totalHours;
       rec.sessionActive = false;
@@ -1352,15 +1299,78 @@ exports.autoEndSessions = async (req, res) => {
       rec.sessionEndedAt = closeAt;
       rec.status = status;
       rec.autoClosed = true;
-      rec.forceClosedBy = req.user?.id === 'system' ? undefined : req.user?.id;
-      rec.forcedLogoutReason = forcedLogoutReason;
-      rec.flags = [...new Set([...(rec.flags || []), ...flags, 'auto_ended', forcedLogoutReason])];
+      rec.forcedLogoutReason = reason;
+      rec.flags = [...new Set([...(rec.flags || []), ...flags, 'auto_ended', reason])];
       await rec.save();
-      await Notification.create({ user: rec.user, title: 'Session Auto-Ended', message: `Session auto-closed at ${fmtTime(closeAt)} (${forcedLogoutReason}). Total: ${totalHours}h · ${status}`, type: 'warning' });
+      await BreakLog.updateMany({ user: rec.user, date: rec.date, status: 'on_break' }, { status: 'auto_overdue', breakEnd: closeAt, employeeReason: `Auto closed: ${reason}` });
+      await Notification.create({ user: rec.user, title: 'Session Auto-Ended', message: `Session auto-closed at ${fmtTime(closeAt)}. Reason: ${reason}. Total: ${totalHours}h · ${status}`, type: 'warning' });
       count++;
     }
-    await logAudit(req.user?.id || 'system', 'AUTO_END_SESSIONS', istDateKey(now), { count, skipped }, req.ip);
+    await logAudit(req.user?.id || 'system', 'AUTO_END_SESSIONS', istDateKey(), { count, skipped }, req.ip);
     ok(res, { success: true, count, skipped, ranAt: now });
+  } catch (e) { err(res, e.message); }
+};
+
+// ── Break Management ─────────────────────────────────────────
+exports.startBreak = async (req, res) => {
+  try {
+    const today = istDateKey();
+    const settings = await getSessionSettings();
+    if (!settings.breakEnabled) return err(res, 'Breaks are disabled by super admin.', 400);
+    const att = await Attendance.findOne({ user: req.user.id, date: today, sessionActive: true });
+    if (!att) return err(res, 'You must be active before starting a break.', 400);
+    const open = await BreakLog.findOne({ user: req.user.id, date: today, status: 'on_break' });
+    if (open) return err(res, 'You are already on break.', 400);
+    const used = await BreakLog.countDocuments({ user: req.user.id, date: today });
+    if (used >= settings.maxBreaksPerDay) return err(res, `Daily break limit reached (${settings.maxBreaksPerDay}).`, 400);
+    const now = istNow();
+    const log = await BreakLog.create({ user: req.user.id, date: today, breakStart: now, allowedMinutes: settings.breakAllowedMinutes, status: 'on_break' });
+    await logAudit(req.user.id, 'BREAK_START', log._id, { allowedMinutes: settings.breakAllowedMinutes }, req.ip);
+    ok(res, { success: true, breakLog: log, message: `Break started. Return within ${settings.breakAllowedMinutes} minutes.` });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.endBreak = async (req, res) => {
+  try {
+    const today = istDateKey();
+    const log = await BreakLog.findOne({ user: req.user.id, date: today, status: 'on_break' }).sort({ breakStart: -1 });
+    if (!log) return err(res, 'No active break found.', 400);
+    const now = istNow();
+    const actualMinutes = Math.max(0, Math.round((now - new Date(log.breakStart)) / 60000));
+    const lateMinutes = Math.max(0, actualMinutes - Number(log.allowedMinutes || 0));
+    log.breakEnd = now;
+    log.actualMinutes = actualMinutes;
+    log.lateMinutes = lateMinutes;
+    log.status = lateMinutes > 0 ? 'late_return' : 'completed';
+    if (req.body?.employeeReason) log.employeeReason = req.body.employeeReason;
+    await log.save();
+    await logAudit(req.user.id, 'BREAK_END', log._id, { actualMinutes, lateMinutes }, req.ip);
+    if (lateMinutes > 0) await Notification.create({ user: req.user.id, title: 'Late Break Return', message: `You returned ${lateMinutes} minutes late from break.`, type: 'warning' });
+    ok(res, { success: true, breakLog: log, message: lateMinutes > 0 ? `Break ended. Late by ${lateMinutes} minutes.` : 'Break ended on time.' });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.getBreakLogs = async (req, res) => {
+  try {
+    const isAdm = ['admin', 'super_admin'].includes(req.user.role);
+    const filter = isAdm ? {} : { user: req.user.id };
+    if (req.query.date) filter.date = req.query.date;
+    const logs = await BreakLog.find(filter).populate('user', 'name department jobTitle').populate('reviewedBy', 'name').sort({ createdAt: -1 }).limit(500);
+    ok(res, { success: true, breaks: logs });
+  } catch (e) { err(res, e.message); }
+};
+
+exports.reviewBreak = async (req, res) => {
+  try {
+    const log = await BreakLog.findById(req.params.id);
+    if (!log) return err(res, 'Break log not found', 404);
+    log.superAdminComment = req.body?.superAdminComment || '';
+    log.reviewedBy = req.user.id;
+    log.reviewedAt = new Date();
+    if (log.status === 'late_return') log.status = 'reviewed';
+    await log.save();
+    await logAudit(req.user.id, 'BREAK_REVIEW', log._id, { comment: log.superAdminComment }, req.ip);
+    ok(res, { success: true, breakLog: log });
   } catch (e) { err(res, e.message); }
 };
 
@@ -1621,7 +1631,7 @@ function numberToWords(num) {
 // ═══════════════════════════════════════════════════════════════
 exports.undoCheckout = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     const rec = await Attendance.findOne({ user: req.user.id, date: today });
     if (!rec) return err(res, 'No attendance record found for today', 404);
     if (!rec.checkOut) return err(res, 'Session is still active — nothing to undo', 400);
@@ -1648,7 +1658,7 @@ exports.undoCheckout = async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 exports.wipeTodayAttendance = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     const { userId } = req.body || {};
     const filter = userId ? { date: today, user: userId } : { date: today };
     const result = await Attendance.deleteMany(filter);
@@ -1705,7 +1715,7 @@ function getCombinedPool(customs) {
 
 exports.getQuoteOfDay = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     // Check if today has an override
     const override = await DailyOverride.findOne({ date: today });
     if (override) {
@@ -1726,7 +1736,7 @@ exports.getQuoteOfDay = async (req, res) => {
 // Admin: shuffle to random / set specific / clear override
 exports.shuffleQuote = async (req, res) => {
   try {
-    const today = istDateKey();
+    const today = new Date().toISOString().split('T')[0];
     const { quoteText, quoteAuthor, clear } = req.body || {};
     if (clear) {
       await DailyOverride.deleteOne({ date: today });

@@ -56,6 +56,10 @@ router.post ('/attendance/login',            authenticate, c.checkIn);          
 router.post ('/attendance/checkout',         authenticate, c.checkOutFull);     // check-out with status recompute
 router.post ('/attendance/undo-checkout',    authenticate, c.undoCheckout);     // undo checkout within 10 min
 router.get  ('/attendance/today',            authenticate, c.getTodayStatus);   // live working status + hours
+router.post ('/attendance/break/start',      authenticate, c.startBreak);
+router.post ('/attendance/break/end',        authenticate, c.endBreak);
+router.get  ('/attendance/breaks',           authenticate, c.getBreakLogs);
+router.put  ('/attendance/breaks/:id/review',authenticate, authorize('super_admin'), c.reviewBreak);
 router.get  ('/attendance/summary',          authenticate, c.getAttendanceSummary);
 router.get  ('/attendance/monthly',          authenticate, c.getMonthlyAttendance);
 router.post ('/attendance/admin-override',   authenticate, authorize('admin','super_admin'), c.adminOverride);

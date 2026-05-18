@@ -27,8 +27,10 @@ const companySchema = new mongoose.Schema({
   // Legacy fallback (still respected if buffer = 0)
   autoEndHour: { type: Number, default: 23 },
   autoEndMinute: { type: Number, default: 59 },
-  // Hard safety cap: admin-adjustable from 1–20 hours to prevent stuck 29h sessions.
   maxSessionHours: { type: Number, default: 8, min: 1, max: 20 },
+  breakEnabled: { type: Boolean, default: true },
+  breakAllowedMinutes: { type: Number, default: 15, min: 1, max: 240 },
+  maxBreaksPerDay: { type: Number, default: 2, min: 0, max: 20 },
 }, { timestamps: true });
 
 // ── User ──────────────────────────────────────────────────────
@@ -108,12 +110,32 @@ const attendanceSchema = new mongoose.Schema({
   sessionStartedAt: { type: Date },
   sessionEndedAt: { type: Date },
   forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  forcedLogoutReason: { type: String, enum: ['', 'max_session_exceeded', 'shift_end_reached', 'admin_force_logout'], default: '' },
+  forcedLogoutReason: { type: String, default: '' },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
 attendanceSchema.index({ date: 1, sessionActive: 1 });
 attendanceSchema.index({ 'correctionRequest.status': 1 });
+
+
+// ── Break Log ─────────────────────────────────────────────────
+const breakLogSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  date: { type: String, required: true },
+  breakStart: { type: Date, required: true },
+  breakEnd: { type: Date },
+  allowedMinutes: { type: Number, default: 15 },
+  actualMinutes: { type: Number, default: 0 },
+  lateMinutes: { type: Number, default: 0 },
+  status: { type: String, enum: ['on_break', 'completed', 'late_return', 'auto_overdue', 'reviewed'], default: 'on_break' },
+  employeeReason: { type: String, default: '' },
+  superAdminComment: { type: String, default: '' },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reviewedAt: { type: Date },
+}, { timestamps: true });
+
+breakLogSchema.index({ user: 1, date: 1 });
+breakLogSchema.index({ status: 1, date: 1 });
 
 // ── Work Log ──────────────────────────────────────────────────
 const workLogSchema = new mongoose.Schema({
@@ -434,6 +456,7 @@ module.exports = {
   Company: mongoose.model('Company', companySchema),
   User: mongoose.model('User', userSchema),
   Attendance: mongoose.model('Attendance', attendanceSchema),
+  BreakLog: mongoose.model('BreakLog', breakLogSchema),
   WorkLog: mongoose.model('WorkLog', workLogSchema),
   Salary: mongoose.model('Salary', salarySchema),
   Buyer: mongoose.model('Buyer', buyerSchema),
