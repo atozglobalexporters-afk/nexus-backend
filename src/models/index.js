@@ -27,6 +27,8 @@ const companySchema = new mongoose.Schema({
   // Legacy fallback (still respected if buffer = 0)
   autoEndHour: { type: Number, default: 23 },
   autoEndMinute: { type: Number, default: 59 },
+  // Hard safety cap: admin-adjustable from 1–20 hours to prevent stuck 29h sessions.
+  maxSessionHours: { type: Number, default: 8, min: 1, max: 20 },
 }, { timestamps: true });
 
 // ── User ──────────────────────────────────────────────────────
@@ -106,6 +108,7 @@ const attendanceSchema = new mongoose.Schema({
   sessionStartedAt: { type: Date },
   sessionEndedAt: { type: Date },
   forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  forcedLogoutReason: { type: String, enum: ['', 'max_session_exceeded', 'shift_end_reached', 'admin_force_logout'], default: '' },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
