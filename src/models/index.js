@@ -29,7 +29,7 @@ const companySchema = new mongoose.Schema({
   autoEndMinute: { type: Number, default: 59 },
   maxSessionHours: { type: Number, default: 8, min: 1, max: 20 },
   breakEnabled: { type: Boolean, default: true },
-  breakAllowedMinutes: { type: Number, default: 15, min: 1, max: 240 },
+  breakAllowedMinutes: { type: Number, default: 15, min: 1, max: 180 },
   maxBreaksPerDay: { type: Number, default: 2, min: 0, max: 20 },
 }, { timestamps: true });
 
@@ -107,8 +107,6 @@ const attendanceSchema = new mongoose.Schema({
   },
 
   loginStatus: { type: String, enum: ['online', 'offline'], default: 'offline' },
-  liveStatus: { type: String, enum: ['inactive', 'active', 'on_break', 'completed', 'auto_logged_out'], default: 'inactive' },
-  forcedLogoutReason: { type: String, default: '' },
   sessionStartedAt: { type: Date },
   sessionEndedAt: { type: Date },
   forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -117,27 +115,6 @@ const attendanceSchema = new mongoose.Schema({
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
 attendanceSchema.index({ date: 1, sessionActive: 1 });
 attendanceSchema.index({ 'correctionRequest.status': 1 });
-
-
-// ── Break Log ─────────────────────────────────────────────────
-const breakLogSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  date: { type: String, required: true },
-  breakStart: { type: Date, required: true },
-  breakEnd: { type: Date },
-  allowedMinutes: { type: Number, default: 15 },
-  actualMinutes: { type: Number, default: 0 },
-  lateMinutes: { type: Number, default: 0 },
-  status: { type: String, enum: ['active', 'completed', 'late_return', 'reviewed', 'cancelled', 'auto_closed'], default: 'active' },
-  employeeReason: { type: String, default: '' },
-  superAdminComment: { type: String, default: '' },
-  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  reviewedAt: { type: Date },
-  cancelledAt: { type: Date },
-  cancelReason: { type: String, default: '' },
-}, { timestamps: true });
-
-breakLogSchema.index({ user: 1, date: 1, status: 1 });
 
 // ── Work Log ──────────────────────────────────────────────────
 const workLogSchema = new mongoose.Schema({
@@ -454,11 +431,32 @@ const bankTransactionSchema = new mongoose.Schema({
 
 bankTransactionSchema.index({ account: 1, date: -1 });
 
+
+// ── Break Log ─────────────────────────────────────────────────
+const breakLogSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  attendance: { type: mongoose.Schema.Types.ObjectId, ref: 'Attendance' },
+  date: { type: String, required: true, index: true },
+  breakStart: { type: Date, required: true },
+  breakEnd: { type: Date },
+  allowedMinutes: { type: Number, default: 15 },
+  actualMinutes: { type: Number, default: 0 },
+  lateMinutes: { type: Number, default: 0 },
+  status: { type: String, enum: ['active', 'completed', 'late_return', 'reviewed', 'cancelled'], default: 'active' },
+  employeeReason: { type: String, default: '' },
+  superAdminComment: { type: String, default: '' },
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reviewedAt: { type: Date },
+  cancelledAt: { type: Date },
+  cancelReason: { type: String, default: '' },
+}, { timestamps: true });
+
+breakLogSchema.index({ user: 1, date: 1, status: 1 });
+
 module.exports = {
   Company: mongoose.model('Company', companySchema),
   User: mongoose.model('User', userSchema),
   Attendance: mongoose.model('Attendance', attendanceSchema),
-  BreakLog: mongoose.model('BreakLog', breakLogSchema),
   WorkLog: mongoose.model('WorkLog', workLogSchema),
   Salary: mongoose.model('Salary', salarySchema),
   Buyer: mongoose.model('Buyer', buyerSchema),
@@ -479,4 +477,5 @@ module.exports = {
   Payslip: mongoose.model('Payslip', payslipSchema),
   BankAccount: mongoose.model('BankAccount', bankAccountSchema),
   BankTransaction: mongoose.model('BankTransaction', bankTransactionSchema),
+  BreakLog: mongoose.model('BreakLog', breakLogSchema),
 };
