@@ -56,11 +56,6 @@ router.post ('/attendance/login',            authenticate, c.checkIn);          
 router.post ('/attendance/checkout',         authenticate, c.checkOutFull);     // check-out with status recompute
 router.post ('/attendance/undo-checkout',    authenticate, c.undoCheckout);     // undo checkout within 10 min
 router.get  ('/attendance/today',            authenticate, c.getTodayStatus);   // live working status + hours
-router.post ('/attendance/break/start',      authenticate, c.startBreak);
-router.post ('/attendance/break/end',        authenticate, c.endBreak);
-router.post ('/attendance/break/undo',       authenticate, c.undoBreak);
-router.get  ('/attendance/breaks',           authenticate, c.getBreakLogs);
-router.put  ('/attendance/breaks/:id/review',authenticate, authorize('super_admin'), c.reviewBreak);
 router.get  ('/attendance/summary',          authenticate, c.getAttendanceSummary);
 router.get  ('/attendance/monthly',          authenticate, c.getMonthlyAttendance);
 router.post ('/attendance/admin-override',   authenticate, authorize('admin','super_admin'), c.adminOverride);
@@ -70,6 +65,12 @@ router.get  ('/attendance/corrections',      authenticate, authorize('admin','su
 router.post ('/attendance/auto-mark-absent', authenticate, authorize('admin','super_admin'), c.autoMarkAbsent);
 router.post ('/attendance/auto-end',         authenticate, authorize('admin','super_admin'), c.autoEndSessions);
 router.post ('/attendance/wipe-today',        authenticate, authorize('admin','super_admin'), c.wipeTodayAttendance);
+
+router.post ('/attendance/break/start',    authenticate, c.startBreak);
+router.post ('/attendance/break/end',      authenticate, c.endBreak);
+router.post ('/attendance/break/undo',     authenticate, c.undoBreak);
+router.get  ('/attendance/breaks',         authenticate, c.getBreaks);
+router.put  ('/attendance/breaks/:id/review', authenticate, authorize('super_admin'), c.reviewBreak);
 router.get  ('/holidays',                    authenticate, c.getHolidays);
 router.post ('/holidays',                    authenticate, authorize('admin','super_admin'), c.createHoliday);
 router.delete('/holidays/:id',               authenticate, authorize('admin','super_admin'), c.deleteHoliday);

@@ -91,7 +91,7 @@ const attendanceSchema = new mongoose.Schema({
   note: { type: String },
 
   // Snapshot prevents old attendance from changing when shift settings change later.
-  shiftSource: { type: String, enum: ['employee', 'legacy_assigned_user', 'team', 'department', 'company', 'company_legacy', 'company_settings', 'assigned_shift'], default: 'company_legacy' },
+  shiftSource: { type: String, enum: ['employee', 'legacy_assigned_user', 'team', 'department', 'company', 'company_legacy'], default: 'company_legacy' },
   shiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift' },
   shiftSnapshot: {
     name: { type: String, default: '' },
@@ -107,10 +107,11 @@ const attendanceSchema = new mongoose.Schema({
   },
 
   loginStatus: { type: String, enum: ['online', 'offline'], default: 'offline' },
+  liveStatus: { type: String, enum: ['inactive', 'active', 'on_break', 'completed', 'auto_logged_out'], default: 'inactive' },
+  forcedLogoutReason: { type: String, default: '' },
   sessionStartedAt: { type: Date },
   sessionEndedAt: { type: Date },
   forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  forcedLogoutReason: { type: String, default: '' },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
@@ -127,7 +128,7 @@ const breakLogSchema = new mongoose.Schema({
   allowedMinutes: { type: Number, default: 15 },
   actualMinutes: { type: Number, default: 0 },
   lateMinutes: { type: Number, default: 0 },
-  status: { type: String, enum: ['on_break', 'completed', 'late_return', 'auto_overdue', 'reviewed', 'cancelled'], default: 'on_break' },
+  status: { type: String, enum: ['active', 'completed', 'late_return', 'reviewed', 'cancelled', 'auto_closed'], default: 'active' },
   employeeReason: { type: String, default: '' },
   superAdminComment: { type: String, default: '' },
   reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -136,8 +137,7 @@ const breakLogSchema = new mongoose.Schema({
   cancelReason: { type: String, default: '' },
 }, { timestamps: true });
 
-breakLogSchema.index({ user: 1, date: 1 });
-breakLogSchema.index({ status: 1, date: 1 });
+breakLogSchema.index({ user: 1, date: 1, status: 1 });
 
 // ── Work Log ──────────────────────────────────────────────────
 const workLogSchema = new mongoose.Schema({
