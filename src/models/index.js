@@ -27,9 +27,10 @@ const companySchema = new mongoose.Schema({
   // Legacy fallback (still respected if buffer = 0)
   autoEndHour: { type: Number, default: 23 },
   autoEndMinute: { type: Number, default: 59 },
+  // Safety + break rules
   maxSessionHours: { type: Number, default: 8, min: 1, max: 20 },
   breakEnabled: { type: Boolean, default: true },
-  breakAllowedMinutes: { type: Number, default: 15, min: 1, max: 180 },
+  breakAllowedMinutes: { type: Number, default: 15, min: 1, max: 240 },
   maxBreaksPerDay: { type: Number, default: 2, min: 0, max: 20 },
 }, { timestamps: true });
 
@@ -89,6 +90,10 @@ const attendanceSchema = new mongoose.Schema({
   },
   ipAddress: { type: String },
   note: { type: String },
+  // Stable employee snapshots keep old attendance readable even if user populate fails later.
+  employeeNameSnapshot: { type: String, default: '' },
+  employeeDepartmentSnapshot: { type: String, default: '' },
+  employeeJobTitleSnapshot: { type: String, default: '' },
 
   // Snapshot prevents old attendance from changing when shift settings change later.
   shiftSource: { type: String, enum: ['employee', 'legacy_assigned_user', 'team', 'department', 'company', 'company_legacy'], default: 'company_legacy' },
@@ -110,6 +115,7 @@ const attendanceSchema = new mongoose.Schema({
   sessionStartedAt: { type: Date },
   sessionEndedAt: { type: Date },
   forceClosedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  forceClosedReason: { type: String, default: '' },
 }, { timestamps: true });
 
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
@@ -434,15 +440,15 @@ bankTransactionSchema.index({ account: 1, date: -1 });
 
 // ── Break Log ─────────────────────────────────────────────────
 const breakLogSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  date: { type: String, required: true },
   attendance: { type: mongoose.Schema.Types.ObjectId, ref: 'Attendance' },
-  date: { type: String, required: true, index: true },
   breakStart: { type: Date, required: true },
   breakEnd: { type: Date },
   allowedMinutes: { type: Number, default: 15 },
   actualMinutes: { type: Number, default: 0 },
   lateMinutes: { type: Number, default: 0 },
-  status: { type: String, enum: ['active', 'completed', 'late_return', 'reviewed', 'cancelled'], default: 'active' },
+  status: { type: String, enum: ['on_break', 'completed', 'late_return', 'cancelled'], default: 'on_break' },
   employeeReason: { type: String, default: '' },
   superAdminComment: { type: String, default: '' },
   reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
